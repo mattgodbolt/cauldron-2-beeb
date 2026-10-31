@@ -447,8 +447,6 @@ ENDSECTION
     RTS
 }
 
-SECTION GameData                    ; (as the other sprite routines)
-
 \ 57415, PreShift: frame A's image into the buffer at HL, each line
 \ followed by a zero byte, shifted right by 2 * (E - 12) AND 7 pixels as
 \ one bit stream from HL - 2 (the two bytes before it zeroed). The
@@ -463,8 +461,11 @@ SECTION GameData                    ; (as the other sprite routines)
     ZA_AUTO2 gfx
     ZA_AUTO1 w
     ZA_AUTO1 h
-    ZA_AUTO1 words
-    ZA_AUTO1 passes
+    ZA_AUTO2 last
+    ZA_AUTO1 k
+    ZA_AUTO1 pages
+    ZA_AUTO1 t
+    ZA_AUTO1 yy
     ZA_AUTO1 frame
     STA frame
     \ The two bytes before the buffer, and 24052 = HL - 2.
@@ -502,9 +503,12 @@ SECTION GameData                    ; (as the other sprite routines)
 .copied
     LDA h : STA rb
     LDA w : STA rc
-    \ The shift: 2 * (x - 12) AND 7 pixels, a pass a pixel.
-    LDA re : SEC : SBC #12 : ASL A : AND #7 : BEQ done
-    STA passes
+    \ The shift: 2 * (x - 12) AND 7 pixels, k.
+    LDA re : SEC : SBC #12 : ASL A : AND #7 : BNE shift
+    JMP done
+    ZA_UNREACHABLE
+.shift
+    STA k
     \ The words: (h * (w + 1)) AND 255, SRA, + its carry, + 1 (0 is 256).
     LDA #0 : LDX w : INX
 .mul
@@ -512,27 +516,57 @@ SECTION GameData                    ; (as the other sprite routines)
     DEX : BNE mul
     CMP #&80 : ROR A                ; (SRA)
     ADC #1                          ; (+ the carry it shifted out, + 1)
-    STA words
-    CLC                             ; (the original's AND A: the first pass only)
-.pass
-    LDA a24052 : STA p : LDA a24052+1 : STA p+1
-    LDY #0
-    LDX words
-.word
-    LDA (p),Y : ROR A : STA (p),Y   ; RR L
-    INY
-    LDA (p),Y : ROR A : STA (p),Y   ; RR H
-    INY : BNE same
-    INC p+1
-.same
-    DEX : BNE word
-    DEC passes : BNE pass
+    \ k passes of the stream and its carry, the carry clear at the start
+    \ (AND A) and running on from each pass's end into the next's start,
+    \ turn the stream and the carry as one ring of 16 * words + 1 bits
+    \ right by k. So in one pass: each byte takes the low k bits of the
+    \ byte before it, and the first byte the last byte's low k - 1 bits
+    \ and then a zero (the carry), as if the byte before it were the last
+    \ byte ASLed. The bytes are walked as (p),Y with Y running up to the
+    \ end of a page: the stream's last byte - 1 = 2 * (words - 1) + 1.
+    SEC : SBC #1
+    ASL A : ORA #1 : EOR #&FF : TAY ; Y = 255 - the low byte of it
+    LDA #0 : ROL A : STA pages      ; pages - 1
+    STY p
+    LDA a24052 : SEC : SBC p : STA p
+    LDA a24052+1 : SBC #0 : STA p+1
+    CLC : ADC pages : STA last+1    ; the last byte: at 255 in the last page
+    LDA p : STA last
+    STY yy
+    LDY #255 : LDA (last),Y
+    LDY yy
+    LDX k : CPX #4 : BEQ k4 : BCS k6
+    \ Two bits: two carry chains, the first's carry in C, the second's in
+    \ t's bit 0 (ROR t keeps the first's while the second's turns, ROL t
+    \ swaps them back). The second's starts as the last byte's bit 0.
+    STA t                           ; (C clear: CPX, BCS)
+.k2
+    LDA (p),Y : ROR A : ROR t : ROR A : ROL t : STA (p),Y
+    INY : BNE k2
+    INC p+1 : DEC pages : BPL k2
+    BMI done                        ; (always)
+.k4
+    ASL A : ASL A : ASL A : ASL A : ASL A : STA t   ; (the last byte ASLed) << 4
+.k4_byte
+    LDA (p),Y : TAX
+    LSR A : LSR A : LSR A : LSR A : ORA t : STA (p),Y
+    TXA : ASL A : ASL A : ASL A : ASL A : STA t
+    INY : BNE k4_byte
+    INC p+1 : DEC pages : BPL k4_byte
+    BMI done                        ; (always)
+.k6
+    ASL A : ASL A : ASL A : STA t   ; (the last byte ASLed) << 2
+.k6_byte
+    LDA (p),Y : TAX
+    ASL A : ROL A : ROL A : AND #3 : ORA t : STA (p),Y
+    TXA : ASL A : ASL A : STA t
+    INY : BNE k6_byte
+    INC p+1 : DEC pages : BPL k6_byte
 .done
     INC rc
     LDA frame
     RTS
 }
-ENDSECTION
 
 \ --- Text and scenery ----------------------------------------------------
 
