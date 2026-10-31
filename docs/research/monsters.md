@@ -193,7 +193,7 @@ script ends `253,0` and never respawns (slot 1 is not respawned anyway).
 
 | routine | in | out / effects | preserves |
 |---|---|---|---|
-| `Spawn` 55363 | A slot, E x, D y, C move, B anim | slot set up and drawn; `CurSlot` = A (!) | AF, BC, DE, IX; HL corrupted |
+| `Spawn` 55363 | A slot, E x, D y, C move, B anim | slot set up and drawn; `CurSlot` = A (!); B = the frame's lines, C = 4 x its width | AF, DE, IX; HL corrupted |
 | `ClearSlots` 55472 | | | IX; A, B, DE corrupted |
 | `StopSlot` 55512 | A slot | +0..+5 = 0 | all |
 | `RemoveSlot` 55551 | A slot | stopped, anim 0, sprite erased; +19 untouched | all (and `CurSlot`) |

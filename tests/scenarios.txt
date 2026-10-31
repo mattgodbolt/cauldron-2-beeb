@@ -1,0 +1,29 @@
+# The pass-by-pass scenarios (`make passes`: tools/zxpass.py,
+# tools/beepass.mjs, tools/passcmp.py).
+#
+# One scenario a line:
+#
+#   name  start=k  passes=N  p:KEYS  p:KEYS ...
+#
+# - start: 0-7, the index into StartRooms (61240: 56, 10, 97, 79, 37, 70,
+#   110, 107), forced through the random pointer at the new game.
+# - passes: how many main-loop passes (arrivals at 52430) to log; a run
+#   also stops if the game restarts (52235).
+# - p:KEYS holds KEYS from pass p until the next change. KEYS are R L U D
+#   F (right, left, up, down, fire), joined or with +, or - for none. No
+#   change listed means nothing held. Pass 0 is the first arrival at the
+#   main loop after the new game.
+# - # starts a comment.
+#
+# Firing needs a magic refill first (CanFire, 24017): the fire scenarios
+# check that fire does nothing until then.
+
+idle56        start=0  passes=150
+idle97        start=2  passes=150
+idle79        start=3  passes=150
+idle110       start=6  passes=150
+right56       start=0  passes=300  0:R
+left56        start=0  passes=300  0:L
+leftright97   start=2  passes=300  0:L  80:-  100:R  250:-
+updown10      start=1  passes=200  0:U  60:D  120:-
+fire56        start=0  passes=150  10:F  20:-  30:R+F  60:-

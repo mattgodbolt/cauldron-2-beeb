@@ -1,3 +1,763 @@
 \ ***************************************************************************
-\ The game: start-up and restart (52180, 52235), the main loop, death, the trip outside, room exits, the panel heads, new game.
+\ The game: start-up and restart (52180, 52235), the attract loop, new
+\ game, the main loop, death, the trip outside, room exits, the panel
+\ heads, the frame interrupt's work (57664) and the small helpers
+\ everything shares (57355-57616). docs/research/core.md and monsters.md.
 \ ***************************************************************************
+
+\ The Z80's PUSH rr / POP rr for a register pair in zero page. A is kept
+\ (through X); the flags are TXA's, so a caller that needs flags across
+\ them saves them with PHP.
+MACRO G_PUSH r
+    TAX : LDA r : PHA : LDA r+1 : PHA : TXA
+ENDMACRO
+MACRO G_POP r
+    TAX : PLA : STA r+1 : PLA : STA r : TXA
+ENDMACRO
+\ INC rr. A and the carry kept.
+MACRO G_INC16 r
+    INC r : BNE @+
+    INC r+1
+.@
+ENDMACRO
+\ EX DE,HL. A and the carry kept.
+MACRO G_EXDEHL
+    LDX re : LDY rl : STX rl : STY re
+    LDX rd : LDY rh : STX rh : STY rd
+ENDMACRO
+
+\ The Z80's busy loop `LD BC,n : DEC BC : LD A,C : OR B : JR NZ` takes
+\ 10 + 26n - 5 T-states; at 3.5 MHz that is 2T/7 microseconds.
+FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
+
+\ Non-zero while the original had interrupts off (DI ... EI): the frame
+\ interrupt's work (57664) is skipped, as the original's interrupt was,
+\ while the BBC's own interrupt goes on running the palette (decision 8).
+.hook_off   EQUB 1
+
+\ ---------------------------------------------------------------------------
+\ 52180 Entry: the frame interrupt, the border, the default keys.
+\ The IM 2 table becomes vsync_hook (irq.6502 calls it at each VSync).
+.z52180
+{
+    LDA #1 : STA hook_off               ; DI
+    LDA #LO(z57664) : STA vsync_hook    ; (low byte first: the IRQ tests the high)
+    LDA #HI(z57664) : STA vsync_hook+1
+    LDA #0 : STA a24006                 ; border 0 (the BBC's border is always black)
+    LDX #23                             ; active keys (57784) = default keys (57760)
+.copy
+    LDA a57760,X : STA a57784,X
+    DEX : BPL copy
+    \ falls into 52235
+}
+
+\ ---------------------------------------------------------------------------
+\ 52235 Restart: title tune, menu, credits; fire starts a game. Also the
+\ abort key's, game over's and the win's way back. SP is reset, so
+\ nothing returns here.
+.z52235
+{
+    LDX #&FF : TXS
+    \ The random pointer's low byte from R; the BBC has no R, so the VSync
+    \ count, which as R does depends on how long things took (decision 7).
+    LDA vsyncs : STA a61248
+    LDA #0 : STA a24007 : STA a24008
+    \ 52251-52269 reset the three tune players' variables (50126, 51876,
+    \ 51426 = 0; 50135, 51885, 51435 = 250). They are the sound's, inside
+    \ its code: its transcription does this in its own way.
+    JSR z50100                          ; restart tune 1, play its first tick
+    LDA #1 : STA a24002                 ; the interrupt plays tune 1
+    LDA #0 : STA hook_off               ; EI
+    JSR z53087                          ; clear the screen
+    JSR z52481                          ; the menu
+    JSR z53087
+}
+\ The credits: every 50 passes, the other page.
+.z52290
+{
+    LDA a24007 : BNE wait
+    JSR z53087
+    LDA #LO(a58780) : STA rl : LDA #HI(a58780) : STA rh
+    LDA a24008 : JSR z57395             ; BC = the page's row and column
+    LDA rl : STA rc : LDA rh : STA rb
+    LDA #LO(a58776) : STA rl : LDA #HI(a58776) : STA rh
+    LDA a24008 : JSR z57395             ; HL = its text
+    LDA #1 : STA hook_off               ; DI: the music pauses while it prints
+    JSR z54363
+    LDA #0 : STA hook_off               ; EI
+    LDA #50 : STA a24007
+    LDA a24008 : CLC : ADC #1
+    CMP #2 : BCC flip
+    LDA #0
+.flip
+    STA a24008
+.wait
+}
+.z52338
+{
+    INC a61248 : BNE stepped            ; step the random pointer every pass
+    INC a61248+1
+.stepped
+    \ 10000 DEC BC loops; wait_us reaches only 65535, so in two halves
+    LDX #LO(dec_bc_us(10000) DIV 2) : LDY #HI(dec_bc_us(10000) DIV 2) : JSR wait_us
+    LDX #LO(dec_bc_us(10000) - dec_bc_us(10000) DIV 2) : LDY #HI(dec_bc_us(10000) - dec_bc_us(10000) DIV 2) : JSR wait_us
+    JSR z52767                          ; the controls (abort restarts)
+    AND #16 : BNE z52372                ; fire: a new game
+    LDA a24007 : BEQ again
+    DEC a24007
+.again
+    JMP z52290
+}
+
+\ ---------------------------------------------------------------------------
+\ 52372 New game: the start room from the byte at the random pointer.
+.z52372
+{
+    LDA #0 : STA a24002                 ; music off
+    \ The pointer walks the BBC's main RAM: reading the I/O pages could
+    \ acknowledge an interrupt (decision 7).
+    LDA a61248 : STA rl
+    LDA a61248+1 : AND #&7F : STA rh
+    LDY #0 : LDA (rhl),Y
+    AND #7 : PHA
+    JSR z53858                          ; reset
+    JSR z53550                          ; the panel
+    PLA
+    LDX #LO(a61240) : STX rl : LDX #HI(a61240) : STX rh
+    JSR z57408                          ; A = the start room
+    JSR z52945                          ; the player at its start position
+    JSR z53949                          ; draw it
+    LDA #0 : STA a24027 : STA a24026 : STA a24028
+    LDA #LO(2650) : STA a24046 : LDA #HI(2650) : STA a24046+1    ; (never read)
+    LDA #LO(8384) : STA a24048 : LDA #HI(8384) : STA a24048+1
+    JSR z53036
+    \ falls into the main loop
+}
+
+\ ---------------------------------------------------------------------------
+\ 52430 The main loop. Its pace is the mover's (55783).
+.z52430
+    LDA a24034 : BEQ z52437             ; dying: skip input and the player
+    JMP z52964
+.z52437
+    LDA a24012 : BEQ @+                 ; going outside: skip input
+    JMP z52920
+.@
+    JSR z52767 : STA a24020             ; the controls
+    PHA : JSR z53149 : PLA              ; the reversed-controls timer
+.z52455
+    LDA a24020 : AND #16 : BEQ z52463   ; fire: cast
+    JSR z53163
+.z52463
+    JSR z54530                          ; the player
+.z52466
+    JSR z55783                          ; move and draw every object
+    JSR z53408                          ; room exits
+    JSR z53651                          ; the panel's witch heads
+    JSR z55285                          ; respawn
+    JMP z52430
+
+\ 52920 Going outside, A = 24012: count down; at 0, the new room.
+.z52920
+{
+    SEC : SBC #1 : STA a24012
+    BEQ arrive
+    JMP z52455
+.arrive
+    JSR z54213                          ; the play area's attributes off
+    LDA a24030
+    JSR z52945
+    JSR z53949
+    JSR z53036
+    JMP z52455
+}
+
+\ 52945 PlacePlayer: slot 0 is the pumpkin (anim 1) at room A's start
+\ position (61250: a word per room, x then y). A kept.
+.z52945
+{
+    PHA
+    LDX #LO(a61250) : STX rl : LDX #HI(a61250) : STX rh
+    JSR z57395
+    LDA rl : STA re : LDA rh : STA rd   ; PUSH HL : POP DE
+    LDA #0 : STA rc                     ; BC = 256: anim 1, move 0
+    LDA #1 : STA rb
+    LDA #0
+    JSR z55363
+    PLA
+    RTS
+}
+
+\ 52964 Dying, A = 24034: count down; at 0 a life is lost.
+.z52964
+{
+    SEC : SBC #1 : STA a24034
+    BEQ dead
+    JMP z52466
+.dead
+    LDA a24035 : SEC : SBC #1
+    BPL alive
+    JMP z53101                          ; game over
+.alive
+    STA a24035
+    \ the life's pumpkin off the panel: y 58796, x 58797 + lives
+    LDX a58796 : STX rd
+    LDX #LO(a58796+1) : STX rl : LDX #HI(a58796+1) : STX rh
+    JSR z57408
+    STA re
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA #1
+    JSR z57415
+    LDX #1 : STX xor_erase
+    JSR z57194
+    LDX #0 : STX xor_erase
+    LDA #'9' : STA a58813 : STA a58814  ; MAGIC 99
+    LDA #LO(a58835) : STA re : LDA #HI(a58835) : STA rd
+    JSR z57568                          ; (minus 0: prints it)
+    JSR z54213
+    LDA a24030
+    JSR z53060                          ; the room to go back to
+    JSR z52945
+    JSR z53949
+    JSR z53036
+    JMP z52437
+}
+
+\ 53036 ResetPlayerState: the pumpkin's motion state; slot 0's move 128,
+\ dir 2, xspd 2. Leaves A = 128.
+.z53036
+    LDA #0 : STA a24028 : STA a24026 : STA a24027
+    LDA #2 : STA a24080 : STA a24081
+    LDA #128 : STA a24078
+    RTS
+
+\ 53060 RespawnRoom: room A, or the room a death there sends the pumpkin
+\ to (61232 -> 61236) unless all seven ingredients are held.
+.z53060
+{
+    PHA
+    JSR z56794
+    BNE remap
+    PLA
+    RTS
+.remap
+    PLA
+    LDX #0
+.find
+    CMP a61232,X : BEQ found
+    INX : CPX #4 : BNE find
+    RTS
+.found
+    LDA a61236,X
+    RTS
+}
+
+\ 53101 GameOver: tune 3, the text and the score, wait for fire, restart.
+.z53101
+{
+    LDA #1 : STA hook_off               ; DI
+    JSR z51850
+    LDA #2 : STA a24002
+    LDA #0 : STA hook_off               ; EI
+    JSR z53087
+    LDA #LO(a58515) : STA rl : LDA #HI(a58515) : STA rh
+    LDA #6 : STA rc : LDA #3 : STA rb   ; BC = 774
+    JSR z54363
+    LDA #LO(a58803) : STA rl : LDA #HI(a58803) : STA rh
+    LDA #16 : STA rc : LDA #21 : STA rb ; BC = 5392
+    JSR z54363
+.released
+    JSR z52767 : AND #16 : BNE released
+.pressed
+    JSR z52767 : AND #16 : BEQ pressed
+    JMP z52235
+}
+
+\ ---------------------------------------------------------------------------
+\ 53310 GoOutside, A = the map byte (bit 7 set): the room is A AND 127,
+\ reached after the pumpkin flies off (anim 33) for 105 passes.
+.z53310
+{
+    AND #127 : STA a24030
+    \ the play area's attributes to 0
+    LDA #0 : TAX
+.attr0
+    STA attrs+128,X : STA attrs+128+256,X
+    INX : BNE attr0
+.attr0b
+    STA attrs+128+512,X
+    INX : CPX #128 : BNE attr0b
+    JSR z55472                          ; clear the slots
+    \ 53332-53365: the play area's pixels (lines 32-191) to 0, through
+    \ 57307's line addresses. Ours are rows 4-23, the end of the screen.
+    LDA #LO(screen + 4 * ROW_BYTES) : STA rl
+    LDA #HI(screen + 4 * ROW_BYTES) : STA rh
+    LDA #0 : TAY
+.pix
+    STA (rhl),Y
+    INY : BNE pix
+    INC rh : BPL pix                    ; (to the top of main RAM)
+    ASSERT screen + SCREEN_ROWS * ROW_BYTES = &8000
+    ASSERT LO(screen + 4 * ROW_BYTES) = 0
+    \ the play area's attributes to 70
+    LDA #70 : LDX #0
+.attr70
+    STA attrs+128,X : STA attrs+128+256,X
+    INX : BNE attr70
+.attr70b
+    STA attrs+128+512,X
+    INX : CPX #128 : BNE attr70b
+    \ the pumpkin flies off: slot 0, anim 33, move 1, at x 76 y 100
+    LDA #76 : STA re : LDA #100 : STA rd
+    LDA #1 : STA rc : LDA #33 : STA rb
+    LDA #0
+    JSR z55363
+    LDA #10 : STA a24013
+    LDA #143 : STA a24032
+    LDA #105 : STA a24012
+    RTS
+}
+
+\ 53408 RoomExits: the pumpkin (slot 0) at an edge takes the map's exit
+\ (63498: left, right, below, above), one a pass, x first.
+.z53408
+{
+    LDA a24034 : BEQ alive
+    RTS
+.alive
+    LDA a24030 : STA rl : LDA #0 : STA rh
+    ASL rl : ROL rh : ASL rl : ROL rh
+    LDA rl : CLC : ADC #LO(a63498) : STA riyl
+    LDA rh : ADC #HI(a63498) : STA riyh
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDY #6 : LDA (rix),Y
+    CMP #9 : BCC left                   ; x <= 8
+    CMP #136 : BCS right
+    LDY #7 : LDA (rix),Y
+    CMP #28 : BCC up                    ; y <= 27
+    LDY #18 : CLC : ADC (rix),Y         ; (8-bit, as ADD A,(IX+18))
+    CMP #201 : BCS down
+    RTS
+.left
+    LDY #0 : LDA (riy),Y
+    CMP #128 : BCS outside
+    PHA : LDA #135 : LDY #6 : STA (rix),Y : PLA
+    JMP z53949
+.right
+    LDY #1 : LDA (riy),Y
+    CMP #128 : BCS outside
+    PHA : LDA #9 : LDY #6 : STA (rix),Y : PLA
+    JMP z53949
+.down
+    LDY #2 : LDA (riy),Y
+    CMP #128 : BCS outside
+    PHA : LDA #28 : LDY #7 : STA (rix),Y : PLA
+    JMP z53949
+.up
+    LDY #3 : LDA (riy),Y
+    CMP #128 : BCS outside
+    PHA
+    LDA #200 : SEC : LDY #18 : SBC (rix),Y
+    LDY #7 : STA (rix),Y
+    PLA
+    JMP z53949
+.outside
+    JMP z53310
+}
+
+\ ---------------------------------------------------------------------------
+\ 53651 CackleTick: the panel's witch heads, a step every other pass,
+\ each head with a beep before and after and a frame's wait.
+.z53651
+{
+    LDA a24013 : BEQ go
+    DEC a24013
+    RTS
+.go
+    LDA a24032 : BNE running
+    RTS
+.running
+    BPL stepping
+    AND #127 : STA a24032               ; just started
+    LDA #0 : STA a24033 : STA a24001
+.stepping
+    LDA a24033 : BEQ step
+    DEC a24033
+    RTS
+.step
+    LDA a24032 : PHA
+    LDX #LO(a61216) : STX rl : LDX #HI(a61216) : STX rh
+    JSR z57408                          ; A = frame c, HL = 61216 + c
+    G_PUSH rhl : G_PUSH rhl
+    LDX #4 : STX re : LDX #13 : STX rd  ; DE = 3332: the left head
+    LDX #LO(a24225) : STX rl : LDX #HI(a24225) : STX rh
+    JSR z57415                          ; frame c, new buffer
+    G_POP rhl
+    JSR dec_hl
+    LDY #0 : LDA (rhl),Y
+    LDX #LO(a24427) : STX rl : LDX #HI(a24427) : STX rh
+    JSR z57415                          ; frame c - 1, old buffer
+    JSR draw_pair
+    \ the right head: the same frames + 3
+    G_POP rhl
+    LDY #0 : LDA (rhl),Y : CLC : ADC #3
+    G_PUSH rhl
+    LDX #112 : STX re : LDX #13 : STX rd    ; DE = 3440
+    LDX #LO(a24225) : STX rl : LDX #HI(a24225) : STX rh
+    JSR z57415
+    G_POP rhl
+    JSR dec_hl
+    LDY #0 : LDA (rhl),Y : CLC : ADC #3
+    LDX #LO(a24427) : STX rl : LDX #HI(a24427) : STX rh
+    JSR z57415
+    JSR draw_pair
+    PLA
+    SEC : SBC #1 : STA a24032
+    LDA #1 : STA a24033
+    RTS
+
+\ 53724-53740: beep, HALT, the two images XORed (A, B, C: the old
+\ frame's, as the original leaves them), beep.
+.draw_pair
+    JSR z53798
+    PHA : JSR wait_vsync : PLA          ; HALT
+    LDX #LO(a24225) : STX rl : LDX #HI(a24225) : STX rh
+    JSR z57194
+    LDX #LO(a24427) : STX rl : LDX #HI(a24427) : STX rh
+    LDX #1 : STX xor_erase
+    JSR z57194
+    LDX #0 : STX xor_erase
+    JMP z53798
+
+.dec_hl
+    LDA rl : BNE lo
+    DEC rh
+.lo
+    DEC rl
+    RTS
+}
+
+\ 53798 CackleBeep: 24001 = (24001 - 1) AND 31, a tone at that pitch
+\ (52854). Every register kept.
+.z53798
+{
+    PHA
+    G_PUSH rde : G_PUSH rhl : G_PUSH rix : G_PUSH rbc
+    LDA a24001 : SEC : SBC #1 : AND #31 : STA a24001
+    JSR z52854
+    G_POP rbc : G_POP rix : G_POP rhl : G_POP rde
+    PLA
+    RTS
+}
+
+\ 53858 NewGame's reset: the variables 24000-25058, score 0000000, the
+\ refills back, MAGIC 99, the screen and attributes cleared, room 10's
+\ guardian chasing again (59582).
+.z53858
+{
+    LDA #LO(a24000) : STA rl : LDA #HI(a24000) : STA rh
+    LDA #LO(1059) : STA rc : LDA #HI(1059) : STA rb
+    LDY #0
+.zero
+    TYA : STA (rhl),Y
+    INC rl : BNE z1
+    INC rh
+.z1
+    LDA rc : BNE z2
+    DEC rb
+.z2
+    DEC rc
+    LDA rc : ORA rb : BNE zero
+    LDA #'0' : LDX #6
+.score
+    STA a58804,X
+    DEX : BPL score
+    LDX #51
+.items
+    LDA a61521,X : AND #127 : STA a61521,X
+    DEX : BPL items
+    LDA #'9' : STA a58813 : STA a58814
+    LDA #192 : STA rb
+    LDA #0
+    JSR z53931                          ; lines 0-191 cleared
+    LDA #0
+    JSR z53534                          ; border 0
+    LDA #0 : TAX
+.attr
+    STA attrs,X : STA attrs+256,X : STA attrs+512,X
+    INX : BNE attr
+    LDA #252 : STA a59582
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ 56700 RoomDoneBit: HL = 24054 + room / 8, A = its byte, C = the room's
+\ bit (128 >> (room AND 7)).
+.z56700
+{
+    LDA a24030 : AND #7 : TAX
+    LDA #128
+.shift
+    DEX : BMI done
+    LSR A : JMP shift
+.done
+    STA rc
+    LDA a24030 : LSR A : LSR A : LSR A
+    LDX #LO(a24054) : STX rl : LDX #HI(a24054) : STX rh
+    JMP z57408
+}
+
+\ 56729 HaveItem: Z if A is in the inventory (24070-24076). A, BC, HL kept.
+.z56729
+{
+    LDX #6
+.find
+    CMP a24070,X : BEQ done
+    DEX : BPL find                      ; (X = 255 at the end: NZ)
+.done
+    RTS
+}
+
+\ 56794 HaveAllItems: Z if the inventory is all seven (61514). Callers use
+\ only Z.
+.z56794
+{
+    LDX #0
+.cmp
+    LDA a24070,X : CMP a61514,X : BNE done
+    INX : CPX #7 : BNE cmp
+    LDA #0                              ; (XOR A: Z)
+.done
+    RTS
+}
+
+\ 57355 IsSpecial: 24010 = A; Z if A is one of the nine bytes at 57808.
+\ A, BC, HL kept.
+.z57355
+{
+    STA a24010
+    LDX #8
+.find
+    CMP a57808,X : BEQ done
+    DEX : BPL find                      ; (NZ at the end)
+.done
+    RTS
+}
+
+\ 57371 ObjectSlot: IX = HL = slot A (24077 + 20A). DE = 24077, A = 0,
+\ as the original's multiply leaves them.
+.z57371
+    LDX #20 : STX re : LDX #0 : STX rd
+    JSR z57546
+    LDA #LO(a24077) : STA re : CLC : ADC rl : STA rl : STA rixl
+    LDA #HI(a24077) : STA rd : ADC rh : STA rh : STA rixh
+    LDA #0
+    RTS
+
+\ 57385 Index4: HL += 4A. A, DE kept.
+.z57385
+    PHA
+    TAX
+    LSR A : LSR A : LSR A : LSR A : LSR A : LSR A : TAY
+    TXA : ASL A : ASL A
+    CLC : ADC rl : STA rl
+    TYA : ADC rh : STA rh
+    PLA
+    RTS
+
+\ 57395 WordAt: HL = the word at HL + 2A (A < 128). A kept.
+.z57395
+    PHA
+    ASL A : CLC : ADC rl : STA rl
+    BCC nc_57395
+    INC rh
+.nc_57395
+    LDY #0 : LDA (rhl),Y : TAX
+    INY : LDA (rhl),Y : STA rh
+    STX rl
+    PLA
+    RTS
+
+\ 57408 ByteAt: HL += A, A = (HL).
+.z57408
+    CLC : ADC rl : STA rl
+    BCC nc_57408
+    INC rh
+.nc_57408
+    LDY #0 : LDA (rhl),Y
+    RTS
+
+\ 57520 Divide: BC = BC / DE, HL = the remainder; A and DE kept. (Not
+\ seen called.)
+.z57520
+{
+    PHA
+    LDA #0 : STA rl : STA rh
+    LDX #16
+    CLC                                 ; (the caller's carry comes out at the end, unread)
+.bit
+    ROL rc : ROL rb                     ; RL C : RLA (A = B), the quotient bit in
+    ROL rl : ROL rh                     ; ADC HL,HL: C = the bit out
+    PHP : PLA : EOR #1 : LSR A          ; SBC HL,DE takes that bit as its borrow
+    LDA rl : SBC re : TAY
+    LDA rh : SBC rd
+    BCC borrow
+    STA rh : STY rl                     ; kept; CCF makes a quotient bit of 1
+    SEC
+    JMP next
+.borrow
+    PHA                                 ; ADD HL,DE back
+    TYA : CLC : ADC re : STA rl
+    PLA : ADC rd : STA rh
+    LDA #0 : ROL A : EOR #1 : LSR A     ; CCF
+.next
+    DEX : BNE bit
+    ROL rc : ROL rb
+    PLA
+    RTS
+}
+
+\ 57546 Multiply: HL = A x DE; DE shifted left 8 (unless A = 0); A = 0.
+\ BC kept.
+.z57546
+{
+    LDX #0 : STX rl : STX rh
+    CMP #0 : BEQ done
+    LDX #8
+.bit
+    LSR A : BCC no
+    PHA
+    LDA rl : CLC : ADC re : STA rl
+    LDA rh : ADC rd : STA rh
+    PLA
+.no
+    ASL re : ROL rd
+    DEX : BNE bit
+.done
+    RTS
+}
+
+\ 57568 SubMagic: MAGIC (58813-58814) minus the two digits at DE+1,
+\ DE+2, printed. Below 0: "00" and the pumpkin dies (56571). Leaves C
+\ clear if it ran out (the 6502's borrow; the Z80's C set).
+.z57568
+{
+    LDA re : CLC : ADC #2 : STA rl      ; HL = DE + 2: the string's last digit
+    LDA rd : ADC #0 : STA rh
+    LDA #LO(a58814) : STA re : LDA #HI(a58814) : STA rd
+    LDX #2 : LDY #0
+    SEC                                 ; (no borrow)
+.digit
+    LDA (rde),Y : SBC (rhl),Y
+    CMP #'0' : BCS ok
+    ADC #10                             ; (C clear: +10, and a borrow out)
+.ok
+    STA (rde),Y
+    DEC re                              ; (DEC: the carry is kept)
+    LDA rl : BNE l1
+    DEC rh
+.l1
+    DEC rl
+    DEX : BNE digit
+    PHP
+    BCS print
+    LDA #'0' : STA a58813 : STA a58814
+    JSR z56571
+.print
+    LDA #LO(a58812) : STA rl : LDA #HI(a58812) : STA rh
+    LDA #14 : STA rc : LDA #3 : STA rb  ; BC = 782
+    JSR z54363
+    PLP
+    RTS
+}
+    ASSERT HI(a58813) = HI(a58814)      ; (57568 steps DE back by its low byte)
+
+\ 57616 AddScore: the score (58804-58810) plus the number string at DE
+\ (a length, then the digits), printed.
+.z57616
+{
+    LDY #0 : LDA (rde),Y
+    BEQ print
+    STA rc
+    \ DE = the string's last digit: DE + 1 + length - 1
+    CLC : ADC re : STA re
+    BCC d1
+    INC rd
+.d1
+    LDA #LO(a58810) : STA rl : LDA #HI(a58810) : STA rh
+    LDA #7 : STA rb
+    CLC
+.digit
+    LDY #0 : LDA (rde),Y
+    DEC rc : BPL have                   ; past the string's start: 0
+    LDA #0
+.have
+    ADC (rhl),Y
+    CMP #58 : BCC fits                  ; (C clear: no carry on)
+    SBC #10                             ; (C set: stays set, the carry on)
+.fits
+    STA (rhl),Y
+    LDA rl : BNE h1
+    DEC rh
+.h1
+    DEC rl
+    LDA re : BNE e1
+    DEC rd
+.e1
+    DEC re
+    DEC rb : BNE digit
+.print
+    LDA #LO(a58803) : STA rl : LDA #HI(a58803) : STA rh
+    LDA #12 : STA rc : LDA #1 : STA rb  ; BC = 268
+    JMP z54363
+}
+
+\ ---------------------------------------------------------------------------
+\ 57664 the frame interrupt's work, at each VSync through vsync_hook:
+\ step the random pointer, a tick of the running tune (24002: 1 title,
+\ 2 game over, 3 win, through 64019), a step of the sound effect.
+\ Keeps Y and the register zero page (irq.6502 keeps A and X), and the
+\ sideways bank: the tables are GAMEDATA's, and a room's drawing may
+\ have ROOMDATA in.
+.z57664
+{
+    ZA_INTERRUPT
+    TYA : PHA
+    LDX #ZP_REGS_END - ZP_REGS - 1
+.save
+    LDA ZP_REGS,X : PHA
+    DEX : BPL save
+    LDA hook_off : BNE off
+    LDA romshad : PHA
+    JSR page_game
+    INC a61248 : BNE stepped
+    INC a61248+1
+.stepped
+    LDA a24002 : BEQ effect
+    LDX #LO(a64019) : STX rl : LDX #HI(a64019) : STX rh
+    JSR z57395
+    JSR tune
+.effect
+    LDA a24000 : BEQ done
+    JSR z57714
+.done
+    PLA : STA romshad : STA romsel
+.off
+    LDX #0
+.restore
+    PLA : STA ZP_REGS,X
+    INX : CPX #ZP_REGS_END - ZP_REGS : BNE restore
+    PLA : TAY
+    RTS
+.tune
+    JMP (rhl)
+    ZA_CANJUMP z50113, z51863, z51413
+}
+
+z57696 = z57664.effect
+
+\ 57714 IrqEffect, A = 24000: count it down and beep at (A AND 31) + 50.
+.z57714
+    SEC : SBC #1 : STA a24000
+    AND #31 : CLC : ADC #50
+    JMP z52854
