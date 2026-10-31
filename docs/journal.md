@@ -40,3 +40,28 @@ How the port got here, in order: what worked and what didn't.
   the BBC side stops at the first unwritten routine (the title tune,
   50100) until the other layers land.
 - Research correction: Spawn (55363) doesn't keep BC.
+
+## 2026-10-31: the player and the input
+
+- The controls byte's bits checked against the code, not the notes:
+  KEMPSTON_MAP (57744) turns R=1 L=2 D=4 U=8 into 8, 4, 2, 1, the
+  Interface II table (57760) gives 9, 8, 6, 7 (Sinclair's up, down,
+  left, right) the bits 1, 2, 4, 8, and MOVE_UP runs on direction bit 0.
+  So bit 0 is up, 1 down, 2 left, 3 right: player.md has it right,
+  core.md's "bit 0 right, 1 left, 2 down, 3 up" is the Kempston port's
+  own order.
+- The readers are the original's two (decision 6) behind its vector at
+  57726; 52775's abort follows the call, as the pushed return did.
+- The player (53149, 53163, 53221, 54513-55284) transcribed with (IX+n)
+  as `a24077+n`, since IX is always the player there. The row loops'
+  PUSH/POP around TEST_ROW became a save and a restore that keeps the
+  flags (PLA would lose them).
+- `tools/playertest.py` runs the original on the simulator and the port
+  on py65 from the same state each pass (the screen's lit pixels laid
+  out as ours, the attributes, variables and tables), compares the
+  player's variables and the calls made, and perturbs the state now and
+  then (odd directions, a stale deadly 24014, random pixels with a solid
+  attribute under the pumpkin) until every instruction of the original's
+  player code has run. The readers are compared for every input. No
+  differences. The routines others own that the player calls (57307,
+  57326, 57355) are the test's own Python, from the original's code.
