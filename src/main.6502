@@ -1,0 +1,112 @@
+\ ***************************************************************************
+\ CAULDRON II for the BBC Micro - build file
+\
+\ !BOOT runs C2, whose loader loads TITLE (the Spectrum's loading screen,
+\ converted by tools/mkscreen.py) straight into screen memory, then copies
+\ the game down to &0E00 and runs it: it takes the machine over and shows
+\ TITLE in the Spectrum's geometry. (C2 loads TITLE, not !BOOT: the OS
+\ echoes !BOOT's lines into MODE 7's screen, which is inside ours.)
+\ ***************************************************************************
+
+INCLUDE "defs.6502"
+
+\ The build stamp comes from the Makefile (-D BUILD="date time sha"), so a
+\ disc says what it is: *TYPE !BOOT shows it. A + after the sha means the
+\ tree had uncommitted changes.
+IF DEFINED(BUILD)
+    build_stamp = BUILD
+ELSE
+    build_stamp = "DEV"
+ENDIF
+
+\ The game's permanent zero page, below the allocator's pool.
+ZP_FIXED = &70
+vsyncs      = ZP_FIXED + 0      ; VSyncs so far (irq.6502)
+splits_on   = ZP_FIXED + 1      ; the palette splits run (irq.6502)
+irq_split   = ZP_FIXED + 2      ; 4 * the next split
+vsync_hook  = ZP_FIXED + 3      ; called at VSync if its high byte isn't 0 (2 bytes)
+ZP_END      = ZP_FIXED + 5
+    ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
+
+SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF
+    EQUS "*| CAULDRON II ", build_stamp, 13
+    EQUS "*RUN C2", 13
+ENDSECTION
+
+SECTION Title, org = screen, load = &FFFF0000 OR screen, exec = &FFFF0000 OR screen, filename = "TITLE"
+    INCBIN "../build/data/title.bin"
+    ASSERT P% = &8000
+ENDSECTION
+
+LD_SRC = &80                        ; (the loader's zero page: the game's isn't set up)
+LD_DST = &82
+
+\ C2: the game, assembled to run from &0E00 (the DFS's workspace, free
+\ once the game owns the machine), loaded at &1900 with the loader after
+\ it, which does the disc's work and copies it down.
+SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filename = "C2"
+.payload
+    SECTION Code, org = &0E00, guard = screen
+    ZA_POOL &00..ZP_FIXED-1
+.code_start
+
+.start
+{
+    ZA_ENTRY
+    LDX #&FF : TXS
+    JSR init_system
+    LDA #LO(title_palette) : LDY #HI(title_palette) : JSR set_palette
+    JSR screen_on
+}
+.shown                              ; (global: the tools run to here)
+    JSR any_key : BEQ shown
+.stop
+    JMP stop
+
+    INCLUDE "system.6502"
+    INCLUDE "irq.6502"
+    INCLUDE "screen.6502"
+    INCLUDE "../build/data/title.6502"
+.code_end
+    ENDSECTION
+.payload_end
+
+\ C2's loader: runs where the file loaded, after the payload, and nothing
+\ in it is wanted afterwards. TITLE into the screen, with the OS and the
+\ DFS; then the machine is the game's: the payload down to &0E00, over the
+\ DFS's workspace.
+.loader
+    LDX #LO(title_block) : LDY #HI(title_block)
+    LDA #&FF : JSR osfile           ; load TITLE at its own address
+    SEI                             ; the interrupts stay off until install_irq
+    LDA #LO(payload) : STA LD_SRC : LDA #HI(payload) : STA LD_SRC+1
+    LDA #LO(code_start) : STA LD_DST : LDA #HI(code_start) : STA LD_DST+1
+    LDX #HI(code_end - code_start + &FF)
+    LDY #0
+.copy_down
+    LDA (LD_SRC),Y : STA (LD_DST),Y ; (upwards, to a lower address: safe)
+    INY : BNE copy_down
+    INC LD_SRC+1 : INC LD_DST+1
+    DEX : BNE copy_down
+    JMP start
+
+\ OSFILE's block for loading TITLE where it was saved.
+.title_block
+    EQUW title_name
+    EQUD 0, &FFFFFFFF               ; (exec's low byte non-zero: its own address)
+    EQUD 0, 0
+.title_name
+    EQUS "TITLE", 13
+
+.loader_end
+    ASSERT loader_end <= screen      ; (TITLE loads over the screen after it)
+ENDSECTION
+
+\ The game's workspace, after its code: not in the file.
+SECTION Work, org = code_end, guard = screen, virtual = TRUE
+.frame_ula      SKIP 16         ; the palette VSync writes (irq.6502)
+.split_ula      SKIP 4 * MAX_SPLITS ; each split's four writes
+.split_latch    SKIP 2 * (MAX_SPLITS + 1)   ; T1's periods
+.work_end
+    PRINT "code &0E00-&", ~code_end, ", workspace to &", ~work_end, " (", screen - work_end, " bytes free)"
+ENDSECTION

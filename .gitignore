@@ -3,3 +3,5 @@ prior/
 build/
 .venv/
 shots/
+node_modules/
+__pycache__/
