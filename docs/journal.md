@@ -178,3 +178,24 @@ How the port got here, in order: what worked and what didn't.
   per-object work spills past a VSync where the original's doesn't. By
   instruction timings the XOR is still several times the Z80's per byte
   (colour costs a read, masks and a pattern); the pre-shift about the Z80's.
+
+## 2026-10-31: the music as it's written
+
+- Matt asked for the tunes as intended rather than as the beeper plays
+  them (decision 18). The streams have no durations, only a note a
+  tick; a held note is the same note tick after tick, a repeat has a
+  rest between. So a run is one note, held legato on its channel; the
+  re-strike every tick was the beeper player's. Tempo, pitch, channels
+  and the software bass are decision 12's and 13's.
+- A note is struck at full and settles a step a frame to `MUS_SUSTAIN`;
+  the bass's volume switches until its note ends, so the per-tick
+  half-cycle count went and the table with it.
+- `make music` now merges the original's ticks into notes
+  (`tools/musicmodel.py`) and checks each note's start, period or bass
+  half-cycles, length and volumes, and the rests' silence. With
+  `mus_play`'s hold taken out (a strike every tick) it reports the held
+  notes' volumes going back to full.
+- Held bass notes cross VSyncs now, and an edge due during VSync's
+  interrupt waits for it; the next is timed from when it was due, so
+  only that one half-cycle is out. The check's worst-edge bound allows
+  for it.

@@ -224,7 +224,7 @@ the snapshot by `tools/mkmusic.py`):
   51863, 51413), which count the frames.
 - **Articulation:** each note struck again every tick, sounding 2
   frames of its 3 (the original's 2.11 of 3; a frame is the step's
-  grain).
+  grain). *Superseded by decision 18: each note held for its length.*
 - **Pitch:** the beeper's, f = 3500000 / (192 P), as the SN's period
   48P / 7, rounded. Tune 2's notes all fit; tune 1's channel 2 has 80 of
   its 512 ticks below the SN's lowest note (122Hz; down to 94.9Hz) and
@@ -342,3 +342,63 @@ drawing's tile loop, which runs with ROOMDATA in, calls none of these.
 What `xor_down` keeps from one call to the next (a run's address, its
 row, whether it stayed on its cell row) is fixed zero page (`xr_cache`),
 as it outlives any call.
+
+## 18. The music as it's written, not as the beeper plays it (2026-10-31, provisional)
+
+Matt asked for the tunes "as intended": the voices on the SN's own
+channels, sounding as the composer wrote them, rather than the beeper's
+time-slicing of them. This supersedes decision 12's articulation; its
+tempo, pitch and software bass stand, the bass now held.
+
+**What the streams say.** The player has no durations: a stream is a
+note a tick, so a held note is written as the same note tick after tick
+(tune 1's channel 1 holds F#4 for 64 ticks, 192 frames), and a repeated
+note is written with a rest between (tune 2's fanfare: note, rest, note,
+each a tick). Nothing in the data marks a re-strike without a rest; the
+strike every tick is the beeper player's (it plays 2.11 frames of each
+tick with the interrupts off, then lets the speaker sit), not the tune's.
+So:
+
+- **Articulation:** a run of one note in a stream is one note, held
+  legato from the tick it starts to the tick the stream changes; a rest
+  is silence; a different note follows without a gap. The two voices are
+  independent, each on its own channel.
+- **Tempo:** decision 12's: a tick every 3 frames, 2 when both voices
+  rest, so every note's start and length is the original's, in frames.
+- **Volume:** struck at full (attenuation 0) and settling 2dB a frame to
+  attenuation 3 (`MUS_SUSTAIN`), held there: the attack-then-sustain of
+  an `ENVELOPE`, so a note's start is heard against a long held one, and
+  the voices sit under the effects' pulses (which stay at full). Kept
+  simple: one shape for every note, the bass's included.
+
+| | What it sounds like | Cost |
+|---|---|---|
+| **A. Legato with a strike-and-settle** (chosen) | the tunes' long notes long; a note's start audible | a level a channel, a step a frame in the step that runs anyway |
+| B. Legato at one level | an organ: tune 1's two-note trills and its held notes run together | the least |
+| C. Decision 12's re-strike every tick, 2 frames of 3 | the beeper's chop: every held note a 16.7Hz pulse train | none (as was) |
+
+**Channels:** unchanged. The tunes' channel 1 on SN 0, channel 2 on
+SN 1, the effects' pulses on SN 2 (decision 13), the noise channel
+unused. The music still takes only the two channels the original wrote.
+
+**The bass** (below the SN's lowest tone, 4MHz / 32 / 1023 = 122Hz):
+tune 1's channel 2 has 80 of its 512 ticks there (F#2, 94.9Hz); tune 3
+has 10 ticks of channel 1 and 9 of channel 2, 9 of them both channels at
+once (down to 71.5Hz), its two voices falling a semitone apart.
+
+| | Pitch | Cost |
+|---|---|---|
+| **A. Software bass** (kept, decision 12) | exact: a square wave, the channel at period 1 (inaudible) and its volume switched each half-cycle by a System VIA timer | an interrupt a half-cycle: at most two voices at 71-122Hz, under 500 a second, front end only; an edge due while VSync's interrupt runs waits for it, and the next is timed from when it was due |
+| B. Periodic noise clocked by SN 2, at 1/15 of its tone | within 10 cents (SN 2 at period 69-117 for 120.7-71.5Hz; F#2 -4.5 cents) | one voice only, and tune 3 needs two at once; SN 2 is the effects' channel (decision 13), so a pulse would stop the bass; its waveform a 1-in-15 pulse, thin; and decision 12's D: CE2's was silent on Matt's machine |
+| C. Each low note an octave up | an octave out | tune 1's F#2 lands on its own F#3 (the octave pattern becomes a unison); tune 3's falling lines jump up an octave halfway down |
+
+A is kept: the only one exact for both of tune 3's voices, and it leaves
+the effects their channel. Held, a bass note's volume switches until its
+note ends (`bass_stop` on the next tick's change), rather than for a
+tick's half-cycles: the per-note count goes (`mus_edges`).
+
+`make music` checks, for every note of each tune against
+`tools/musicmodel.py`'s merge of the original's ticks into notes: its
+start, its SN period (or a bass note's half-cycles and their spacing),
+its length held at that period, its volumes (struck once, never louder
+until it ends), and silence in each rest.
