@@ -181,7 +181,7 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
 \ lines. (xs_nb - 1) * xr_step + xs_n is at most 255.
 \
 \ It goes a sub-run at a time: the bytes whose cells share an ink (with
-\ spr_ink not negative, all of them), at most 16. Each line's bytes go
+\ spr_ink not negative, all of them), at most 15. Each line's bytes go
 \ last first, X the byte's index in the image + 1 and Y 16 * its byte
 \ in the sub-run + its line, so that Y's borrow ends the line; the
 \ image and the spread tables are operands set for the sub-run and the
@@ -189,9 +189,8 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
 \ it into the other line's.
 .xor_seg
 {
-    ZA_AUTO2 sl                     ; our address of the run's first byte (its left four pixels)
-    ZA_AUTO2 sp                     ; the scenery inks of its cell on
-    ZA_AUTO2 bl                     ; the sub-run's first byte, its left four
+    ZA_AUTO2 sp                     ; the scenery inks of the run's cell on
+    ZA_AUTO2 bl                     ; our address of the sub-run's first byte, its left four pixels
     ZA_AUTO2 br                     ; ... and its right four
     ZA_AUTO1 r8
     ZA_AUTO1 i0
@@ -200,22 +199,22 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     ZA_AUTO1 ink
     ZA_AUTO1 pt
     ZA_AUTO1 pd
-    ZA_AUTO1 nl
     ZA_AUTO1 sv
     ZA_AUTO1 old
     STX sp
-    TYA : AND #7 : ORA zx_lo,X : STA sl
-    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA sl+1     ; (C clear: AND #&18, ASL)
+    TYA : AND #7 : ORA zx_lo,X : STA bl : ORA #8 : STA br
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA bl+1 : STA br+1 ; (C clear: AND #&18, ASL)
     TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA sp+1
     TXA : LSR A : LSR A : AND #&38 : STA r8             ; the character row * 8
     TYA : AND #&18 : ASL A : ASL A : ASL A : ORA r8 : STA r8
     LDA xs_img : SEC : SBC #1 : STA img_op+1            ; (X: the index + 1)
     LDA xs_img+1 : SBC #0 : STA img_op+2
+    LDA xs_nb : CLC : ADC #239 : STA end_op+1           ; (Y past the last line)
     LDY #0
 .sub
     \ The sub-run: i0 (Y) up to i1.
     STY i0
-    TYA : CLC : ADC #16 : CMP xs_n : BCC capped
+    TYA : CLC : ADC #15 : CMP xs_n : BCC capped
     LDA xs_n
 .capped
     STA lim
@@ -233,7 +232,7 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     \ Its patterns: pat_even or pat_odd (odd y) + the row * 8 + the ink.
     LDA ink : CLC : ADC r8 : TAX
     LDA pat_even,X : EOR pat_odd,X : STA pd
-    LDA sl : LSR A                  ; (C: the line's odd)
+    LDA bl : LSR A                  ; (C: the line's odd)
     LDA pat_even,X
     BCC first
     LDA pat_odd,X
@@ -245,12 +244,6 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     CLC : ADC xr_step : STA dx_op+1
     DEX : TXA : ASL A : ASL A : ASL A : ASL A : TAY     ; 16 * (i1 - i0 - 1)
     CLC : ADC #17 : STA dy_op+1
-    \ The sub-run's screen bytes: sl + 16 * i0.
-    LDA i0 : LSR A : LSR A : LSR A : LSR A : STA bl+1
-    LDA i0 : ASL A : ASL A : ASL A : ASL A
-    CLC : ADC sl : STA bl : ORA #8 : STA br             ; (sl's low nibble is the line: no carry)
-    LDA bl+1 : ADC sl+1 : STA bl+1 : STA br+1
-    LDA xs_nb : STA nl
     LDX i1
     SEC
 .cell
@@ -276,8 +269,9 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
 .next
     DEX
     TYA : SBC #16 : TAY : BCS cell
-    \ The line's done (C clear): the next.
-    DEC nl : BEQ sub_done
+    \ The line's done (C clear, Y below end_op's): the next.
+.end_op
+    CPY #0 : BEQ sub_done
     TXA
 .dx_op
     ADC #0 : TAX
@@ -301,6 +295,12 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     JMP next
 .sub_done
     LDY i1 : CPY xs_n : BCS seg_done
+    \ The next sub-run's screen bytes: 16 * (i1 - i0) on (dy_op's - 1).
+    LDX dy_op+1 : DEX : TXA
+    CLC : ADC bl : STA bl : ORA #8 : STA br             ; (bl's low nibble is the line)
+    BCC sub_bl
+    INC bl+1 : INC br+1
+.sub_bl
     JMP sub
 .seg_done
     \ X: the last line's first byte's index.
