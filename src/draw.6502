@@ -76,6 +76,7 @@ SECTION GameData
 
 ZA_AUTO2 xr_img                ; xor_run's image bytes
 ZA_AUTO1 xr_n                   ; ... and how many (1-255)
+ZA_AUTO1 xr_lines               ; xor_lines' lines
 
 \ xor_run: XOR the xr_n bytes at xr_img onto the Spectrum screen from X
 \ (low), Y (high), as the original's INC HL steps along, coloured as the
@@ -94,16 +95,18 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
 \ the other line, which need no working out.
 .xor_down
 {
+    \ What xor_down reuses: fixed zero page (main.6502's xr_cache), as
+    \ it's kept from one call to the next.
+    s0 = xr_cache                   ; our address of the run's first byte
+    sp = xr_cache + 2               ; the scenery inks of its cell on
+    r8 = xr_cache + 4               ; its character row * 8
+    lx = xr_cache + 5               ; its Spectrum address
+    ly = xr_cache + 6
+    one = xr_cache + 7              ; non-zero: the run stayed on its cell row
     ZA_AUTO2 scr                    ; our address of the byte (its left four pixels; the right +8)
-    ZA_AUTO2 s0                     ; ... of the run's first
-    ZA_AUTO2 sp                     ; the scenery inks of the run's first cell on
     ZA_AUTO2 pp                     ; the patterns of its character row and line
-    ZA_AUTO1 lx                     ; the run's start (for xor_down)
-    ZA_AUTO1 ly
-    ZA_AUTO1 one                    ; non-zero: the run stayed on its cell row
     ZA_AUTO1 hy
     ZA_AUTO1 m
-    ZA_AUTO1 r8                     ; its character row * 8
     ZA_AUTO1 i
     ZA_AUTO1 old
     LDA one : BEQ full
@@ -155,6 +158,7 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
     TYA : AND #&18 : ASL A : ASL A : ASL A : ORA r8 : STA r8
 .line
     \ The line's patterns: pat_even or pat_odd (odd y), + the row * 8.
+    STY hy
     LDA #HI(pat_even) : STA pp+1
     TYA : LSR A : LDA r8 : BCC even
     ADC #LO(pat_odd - pat_even) - 1 : BCC even      ; (C set)
@@ -236,6 +240,43 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
     JMP cell_next
 }
 xor_run = xor_down.full
+
+\ xor_lines: xr_lines lines (0 is 256) of xr_n bytes from xr_img, the
+\ first at X (low), Y (high), each the next down as the original steps
+\ its lines (INC H; past a character row, L + 32 and H back a third
+\ unless that carried); each as xor_run, or within a character row
+\ after a line that was one run on screen, as xor_down does it.
+.xor_lines
+{
+    ZA_AUTO1 bx
+    ZA_AUTO1 by
+    ZA_AUTO1 bn
+    STX bx : STY by
+    LDA xr_n : STA bn
+.run
+    LDA bn : STA xr_n
+    LDX bx : LDY by
+    JSR xor_run
+    DEC xr_lines : BEQ done
+.step
+    INC by
+    LDA by : AND #7 : BEQ row
+    LDA xor_down.one : BEQ run
+    INC xor_down.s0                 ; (no carry: (y AND 7) < 7 above)
+    LDA xor_down.s0 : STA xor_down.scr
+    LDA xor_down.s0+1 : STA xor_down.scr+1
+    LDA bn : STA xor_down.m : STA xr_n
+    LDY by : STY xor_down.ly        ; (for xor_down)
+    JSR xor_down.line
+    DEC xr_lines : BNE step
+.done
+    RTS
+.row
+    LDA bx : CLC : ADC #32 : STA bx
+    BCS run
+    LDA by : SEC : SBC #8 : STA by
+    JMP run
+}
 ENDSECTION
 
 
@@ -429,19 +470,9 @@ SECTION GameData
     LDA re : LSR A : LSR A : AND #31
     CLC : ADC scr : STA scr : STA top
     TYA : ADC #0 : STA scr+1 : STA top+1
-    LDA rb : STA lines
-.each_line
+    LDA rb : STA xr_lines
     LDA rc : STA xr_n
-    LDX scr : LDY scr+1 : JSR xor_down
-    \ The next line: INC H; past a character row, L + 32, and H back a
-    \ third unless that carried.
-    INC scr+1
-    LDA scr+1 : AND #7 : BNE stepped
-    LDA scr : CLC : ADC #32 : STA scr
-    BCS stepped
-    LDA scr+1 : SEC : SBC #8 : STA scr+1
-.stepped
-    DEC lines : BNE each_line
+    LDX scr : LDY scr+1 : JSR xor_lines
     \ The colour: 88 + the third, and the top line's low byte.
     LDY frame : LDA a60422,Y : BEQ done
     STA n
