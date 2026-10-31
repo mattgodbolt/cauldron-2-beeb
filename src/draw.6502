@@ -832,9 +832,16 @@ ENDMACRO
 
 \ The bytes from p, Y and pages as walk leaves them, shifted right by k
 \ in place, A the byte before the first: as the fused copy, each byte's
-\ own bits >> k and the byte before's low k bits (X) on top.
+\ own bits >> k and the byte before's low k bits (X) on top. It reads
+\ and writes only main RAM, so it lives in ROOMDATA, paged in for it, as
+\ main RAM is short (decision 23).
 .in_place
     TAX
+    JSR page_rooms
+    JSR in_place_r
+    JMP page_game
+SECTION RoomData
+.in_place_r
     LDA k : CMP #4 : BEQ k4 : BCS k6
     LDA p : STA k2_src+1 : STA k2_dst+1
     LDA p+1 : STA k2_src+2 : STA k2_dst+2
@@ -877,6 +884,7 @@ ENDMACRO
     INC k6_src+2 : INC k6_dst+2
     DEC pages : BPL k6_byte
     RTS
+ENDSECTION
 
 \ Each line's w bytes, then a zero, from HL.
 .copy
