@@ -29,8 +29,8 @@
 
 \ The spread tables and the lit-pixel mask: a Spectrum byte's left four
 \ pixels as a MODE 1 byte, all of each lit pixel's bits set (spread_hi),
-\ its right four (spread_lo); a MODE 1 byte's lit pixels the same way
-\ (litmask). After init_zxscreen (lit_lo).
+\ its right four (spread_lo); a MODE 1 byte's unlit pixels the same way
+\ (unlit). After init_zxscreen (lit_lo).
 .init_draw
 {
     LDX #0
@@ -39,7 +39,7 @@
     TXA : LSR A : LSR A : LSR A : LSR A : ORA spread_hi,X : STA spread_hi,X
     TXA : AND #&0F : STA spread_lo,X
     ASL A : ASL A : ASL A : ASL A : ORA spread_lo,X : STA spread_lo,X
-    LDA lit_lo,X : ASL A : ASL A : ASL A : ASL A : ORA lit_lo,X : STA litmask,X
+    LDA lit_lo,X : ASL A : ASL A : ASL A : ASL A : ORA lit_lo,X : EOR #&FF : STA unlit,X
     INX : BNE each
     STX xor_erase                   ; (0)
     RTS
@@ -55,11 +55,11 @@ ZA_AUTO1 pat                    ; the pattern of the byte being written
 .zx_cell
 {
     ZA_AUTO1 idx
-    ASL A : ASL A : ASL A : ASL A : ASL A : STA idx     ; ink * 32
+    STA idx
     TYA : AND #7 : ORA zx_lo,X : STA zx_ptr
     TYA : AND #&18 : ASL A : ADC zx_hi,X : STA zx_ptr+1 ; (C clear: AND #&18, ASL)
-    TXA : LSR A : LSR A : LSR A : LSR A : LSR A : ORA idx : STA idx
-    TYA : AND #&18 : ORA idx : TAX                      ; + the character row
+    TXA : LSR A : LSR A : AND #&38 : ORA idx : STA idx  ; + the character row * 8
+    TYA : AND #&18 : ASL A : ASL A : ASL A : ORA idx : TAX
     TYA : LSR A : BCS odd
     LDA pat_even,X : STA pat
     RTS
@@ -67,55 +67,105 @@ ZA_AUTO1 pat                    ; the pattern of the byte being written
     LDA pat_odd,X : STA pat
     RTS
 }
-
-\ A = the scenery ink of the cell of Spectrum screen byte X (low), Y
-\ (high). X and Y kept.
-.scen_ink_at
-{
-    ZA_AUTO2 p
-    STX p
-    TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA p+1
-    STY scen_y
-    LDY #0 : LDA (p),Y
-    LDY scen_y
-    RTS
-}
 ZA_AUTO1 scen_y
 
-\ XOR the Spectrum byte A onto the Spectrum screen at X (low), Y (high),
-\ coloured as the head of the file says (spr_ink). An address in the
+ZA_AUTO2 xr_img                 ; xor_run's image bytes
+ZA_AUTO1 xr_n                   ; ... and how many (1-255)
+
+\ XOR the xr_n bytes at xr_img onto the Spectrum screen from X (low), Y
+\ (high), as the original's INC HL steps along, coloured as the head of
+\ the file says (spr_ink); xr_img ends past them. An address in the
 \ attribute file XORs the attribute, as the original's would. A, X, Y
 \ changed.
-.xor_zx
+\
+\ A run along one cell row is our bytes 16 apart, on one character row
+\ and line, so its address, scenery inks and patterns are worked out
+\ once, not a byte at a time.
+.xor_run
 {
+    ZA_AUTO2 scr                    ; our address of the byte (its left four pixels; the right +8)
+    ZA_AUTO2 sp                     ; the scenery inks of the run's first cell on
+    ZA_AUTO2 pp                     ; the patterns of its character row and line
+    ZA_AUTO1 hy
+    ZA_AUTO1 m
+    ZA_AUTO1 i
     ZA_AUTO1 bits
     ZA_AUTO1 sb
-    ZA_AUTO1 stay
-    STA bits
-    CPY #&58 : BCS attr
-    LDA spr_ink : BPL own
-    JSR scen_ink_at
-.own
-    JSR zx_cell
-    LDY #0
-    LDX bits : LDA spread_hi,X : JSR half
-    LDY #8
-    LDX bits : LDA spread_lo,X
-.half
-    BEQ none                        ; (nothing to XOR in this half)
-    STA sb
-    EOR #&FF : AND (zx_ptr),Y : STA stay         ; lit, and the XOR leaves it lit
-    LDA (zx_ptr),Y : TAX
-    LDA litmask,X : EOR #&FF : AND sb : AND pat  ; unlit, and the XOR lights it
-    ORA stay : STA (zx_ptr),Y
-.none
-    RTS
-.attr
-    CPY #&5B : BCS none             ; (past the attributes: not the port's)
+.run
+    STY hy
+    CPY #&58 : BCC on_row
+    CPY #&5B : BCS attr_next        ; (past the attributes: not the port's)
     STX zx_ptr
-    TYA : CLC : ADC #ATTR_HI : STA zx_ptr+1
-    LDY #0 : LDA (zx_ptr),Y : EOR bits : STA (zx_ptr),Y
+    TYA : ADC #ATTR_HI : STA zx_ptr+1                   ; (C clear: CPY, BCS)
+    LDY #0 : LDA (xr_img),Y : EOR (zx_ptr),Y : STA (zx_ptr),Y
+.attr_next
+    INC xr_img : BNE attr_img : INC xr_img+1
+.attr_img
+    INX : BNE attr_l : INC hy
+.attr_l
+    LDY hy
+    DEC xr_n : BNE run
+.done
     RTS
+.on_row
+    \ m: the run's bytes on this cell row (to its end, 31 - x + 1, at most).
+    TXA : ORA #&E0 : EOR #&FF       ; 31 - x
+    CMP xr_n : BCS all
+    ADC #1 : BCC got                ; (C clear: CMP, BCS; at most 32: always)
+.all
+    LDA xr_n
+.got
+    STA m
+    TYA : AND #7 : ORA zx_lo,X : STA scr
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA scr+1    ; (C clear: AND #&18, ASL)
+    STX sp
+    TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA sp+1
+    TXA : LSR A : LSR A : AND #&38 : STA pp             ; the character row * 8
+    TYA : AND #&18 : ASL A : ASL A : ASL A : ORA pp : STA pp
+    TYA : AND #1 : CLC : ADC #HI(pat_even) : STA pp+1  ; (odd lines: pat_odd)
+    LDY spr_ink : BMI cells
+    LDA (pp),Y : STA pat
+.cells
+    LDY #0 : STY i
+.byte
+    LDA (xr_img),Y : BEQ next       ; (nothing to XOR)
+    STA bits
+    BIT spr_ink : BPL own
+    LDA (sp),Y : TAY : LDA (pp),Y : STA pat     ; the cell's scenery ink's
+.own
+    \ Each half: a pixel the XOR lights takes pat if unlit, goes black if
+    \ lit; the others stay. new = old EOR (sb AND (old OR (pat AND unlit))).
+    LDX bits
+    LDY #8 : LDA spread_lo,X
+.half
+    BEQ half_done
+    STA sb
+    LDA (scr),Y : BNE mixed
+    LDA sb : AND pat : STA (scr),Y  ; (all unlit)
+    JMP half_done
+.mixed
+    TAX : LDA unlit,X : AND pat : ORA (scr),Y : AND sb : EOR (scr),Y : STA (scr),Y
+.half_done
+    TYA : BEQ next
+    LDX bits
+    LDY #0 : LDA spread_hi,X
+    JMP half
+.next
+    LDA scr : CLC : ADC #16 : STA scr
+    BCC stepped : INC scr+1
+.stepped
+    INC i : LDY i
+    CPY m : BNE byte
+    \ Past the run's bytes on this row: L + m, the image, the count.
+    TYA : CLC : ADC xr_img : STA xr_img
+    BCC img_ok : INC xr_img+1
+.img_ok
+    LDA xr_n : SEC : SBC m : STA xr_n : BNE more
+    RTS
+.more
+    LDA sp : CLC : ADC m : TAX
+    LDA hy : ADC #0 : TAY
+    JMP run
 }
 
 \ Write the Spectrum byte A to the Spectrum screen at X (low), Y (high),
@@ -146,6 +196,10 @@ ZA_AUTO1 scen_y
 .none
     RTS
 }
+
+\ The sprite routines read GAMEDATA's tables (60422, 59798, the frames),
+\ so they only run with it paged in, and they live there (decision 17).
+SECTION GameData
 
 \ spr_ink for frame A (decision 10): the scenery's when erasing, else the
 \ frame's colour over an empty cell, else (no colour) the pumpkin's
@@ -193,6 +247,8 @@ ZA_AUTO1 scen_y
     ZA_AUTO1 col
     ZA_AUTO1 skip
     ZA_AUTO1 lim
+    ZA_AUTO1 first
+    ZA_AUTO1 cnt
     ZA_AUTO1 n
     ZA_AUTO1 frame
     PLA : STA frame
@@ -220,32 +276,42 @@ ZA_AUTO1 scen_y
     LDA #0 : ROL A : STA rh
     LDA rl : CLC : ADC #LO(a58931) : STA rl
     LDA rh : ADC #HI(a58931) : STA rh
-    LDA rb : STA n
-.each_line
-    LDY #0 : LDA (rl),Y : CLC : ADC col : STA line
-    INY : LDA (rl),Y : ADC #0 : STA line+1
+    \ Every line draws the same bytes, a run: as the original's count
+    \ down picks them (DEC E : JP P, still skipping; DEC D : JP M, past
+    \ the limit), the first (first) and how many (cnt).
     LDA a24038 : STA skip
     LDA a24039 : STA lim
-    LDX rc
-.byte
-    DEC skip : BPL next             ; (Z80 DEC E : JP P: still skipping)
-    DEC lim : BMI next              ; (DEC D : JP M: past the limit)
-    TXA : PHA
-    LDY #0 : LDA (img),Y
-    LDY line+1 : CPY #&40 : BCS on_screen
-    LDY #0 : EOR (line),Y : STA (line),Y         ; the sink
-    JMP inc
-    ZA_UNREACHABLE
+    LDY #0 : STY cnt
+.pick
+    DEC skip : BPL picked
+    DEC lim : BMI picked
+    LDA cnt : BNE more
+    STY first
+.more
+    INC cnt
+.picked
+    INY : CPY rc : BNE pick
+    LDA rb : STA n
+.each_line
+    LDA cnt : BEQ line_done
+    STA xr_n
+    LDA img : CLC : ADC first : STA xr_img
+    LDA img+1 : ADC #0 : STA xr_img+1
+    LDY #0 : LDA (rl),Y : CLC : ADC col : TAX
+    INY : LDA (rl),Y : ADC #0 : TAY
+    CPY #&40 : BCS on_screen
+    STX line : STY line+1           ; the sink: plain memory
+    LDY #0
+.sink
+    LDA (xr_img),Y : EOR (line),Y : STA (line),Y
+    INY : CPY cnt : BNE sink
+    BEQ line_done                   ; (always)
 .on_screen
-    LDX line : JSR xor_zx
-.inc
-    INC line : BNE inced : INC line+1
-.inced
-    PLA : TAX
-.next
-    INC img : BNE imged : INC img+1
+    JSR xor_run
+.line_done
+    LDA img : CLC : ADC rc : STA img
+    BCC imged : INC img+1
 .imged
-    DEX : BNE byte
     LDA rl : CLC : ADC #2 : STA rl
     BCC same : INC rh
 .same
@@ -284,7 +350,7 @@ ZA_AUTO1 scen_y
     ZA_AUTO1 frame
     STA frame
     LDX #1 : JSR sprite_ink         ; (X = 1: not the pumpkin's slot)
-    LDA rl : STA src : LDA rh : STA src+1
+    LDA rl : STA xr_img : LDA rh : STA xr_img+1
     LDA rd : JSR line_addr          ; X, Y = the line's column 0
     STX scr
     LDA re : LSR A : LSR A : AND #31
@@ -292,16 +358,8 @@ ZA_AUTO1 scen_y
     TYA : ADC #0 : STA scr+1 : STA top+1
     LDA rb : STA lines
 .each_line
-    LDA scr : STA at : LDA scr+1 : STA at+1
-    LDA rc : STA n
-.byte
-    LDY #0 : LDA (src),Y
-    LDX at : LDY at+1 : JSR xor_zx
-    INC at : BNE inced : INC at+1
-.inced
-    INC src : BNE srced : INC src+1
-.srced
-    DEC n : BNE byte
+    LDA rc : STA xr_n
+    LDX scr : LDY scr+1 : JSR xor_run
     \ The next line: INC H; past a character row, L + 32, and H back a
     \ third unless that carried.
     INC scr+1
@@ -342,6 +400,7 @@ ZA_AUTO1 scen_y
     LDA frame
     RTS
 }
+ENDSECTION
 
 \ X (low), Y (high) = the Spectrum screen address of line A's column 0,
 \ from the character-row table 58883, as 57307 makes it. A kept.
@@ -387,6 +446,8 @@ ZA_AUTO1 scen_y
     PLA
     RTS
 }
+
+SECTION GameData                    ; (as the other sprite routines)
 
 \ 57415, PreShift: frame A's image into the buffer at HL, each line
 \ followed by a zero byte, shifted right by 2 * (E - 12) AND 7 pixels as
@@ -471,6 +532,7 @@ ZA_AUTO1 scen_y
     LDA frame
     RTS
 }
+ENDSECTION
 
 \ --- Text and scenery ----------------------------------------------------
 

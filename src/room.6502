@@ -212,7 +212,7 @@
     LDA col : LSR A : LSR A : LSR A : LSR A : CLC : ADC q+1
     ADC #HI(screen) : STA q+1
     LDA q : ORA #8 : STA q8 : LDA q+1 : STA q8+1
-    LDA glyph_ink : ASL A : ASL A : ASL A : ASL A : ASL A : ORA row : TAX
+    LDA row : ASL A : ASL A : ASL A : ORA glyph_ink : TAX       ; (row * 8 + ink)
     LDA pat_even,X : STA pe
     LDA pat_odd,X : STA po
     LDY #0
@@ -322,7 +322,7 @@ PANEL_RP3 = 2                       ; green
     JMP make_program
 }
 
-\ The pattern pairs (pat_even, pat_odd at ink * 32 + row) for every row
+\ The pattern pairs (pat_even, pat_odd at row * 8 + ink) for every row
 \ and Spectrum ink, from rp1-3: tools/colours.py's pick. Each pair of
 \ logical colours (a, b) scores 4 * the colours it is out from the ink's,
 \ and a dither (a <> b) 1 more and 2 for each colour the two share; the
@@ -377,7 +377,7 @@ PANEL_RP3 = 2                       ; green
 .worse
     INC j : LDA j : CMP #6 : BNE each_pair
     \ a b a b on even lines, b a b a on odd.
-    LDA ink : ASL A : ASL A : ASL A : ASL A : ASL A : ORA row : TAY
+    LDA row : ASL A : ASL A : ASL A : ORA ink : TAY
     LDX ba : LDA cb_aa,X : LDX bb : ORA cb_55,X : STA pat_even,Y
     LDX bb : LDA cb_aa,X : LDX ba : ORA cb_55,X : STA pat_odd,Y
     INC ink : LDA ink : CMP #8 : BEQ done5

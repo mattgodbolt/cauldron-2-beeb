@@ -324,3 +324,15 @@ palette's workspace sits after the variables, below page `&0D`;
 `MAX_SPLITS` is a split per character row; `lit_hi` is `lit_lo` shifted.
 The build's `PRINT`s give what's left. Fitting more will take moving
 code into sideways RAM or packing the rooms (decision 9's 16K work).
+
+## 17. The sprite routines live in GAMEDATA (2026-10-31, provisional)
+
+The sprite routines (57058-57194 and their colour, `sprite_ink`; the
+pre-shift 57415) read GAMEDATA's tables (the frame attributes 60422, the
+frame table 59798 and the frames), so they can only run with GAMEDATA
+paged in, which it is whenever they're called. `draw.6502` reopens the
+`GameData` section for them, so they take its spare bytes rather than
+main RAM's: making the XOR and the pre-shift fast (a run of bytes along a
+cell row at a time) takes more code than main RAM had. Both builds'
+`PRINT`s give what's left. The room drawing's tile loop, which runs with
+ROOMDATA in, calls none of them.

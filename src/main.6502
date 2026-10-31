@@ -61,9 +61,7 @@ DATA_LOAD = &1900
 SECTION GameData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "GAMEDAT", guard = &C000
     INCLUDE "../build/data/gamedata.6502"
     INCLUDE "../build/data/font.6502"   ; (r_font: the font; GAMEDATA is paged in whenever text prints)
-.gamedata_end
-    PRINT "GAMEDATA &8000-&", ~gamedata_end, " (", &C000 - gamedata_end, " bytes free)"
-    ASSERT DATA_LOAD + gamedata_end - &8000 <= LOADER_ORG
+    \ (draw.6502 adds the sprite routines; gamedata_end follows the code)
 ENDSECTION
 SECTION RoomData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "ROOMDAT", guard = &C000
     INCLUDE "../build/data/roomdata.6502"
@@ -273,6 +271,12 @@ PACKED_TOP = screen
     ASSERT PACKED_TOP >= payload_end    ; (the packed bytes move up, clear of the loader before them)
 ENDSECTION
 
+SECTION GameData
+.gamedata_end
+    PRINT "GAMEDATA &8000-&", ~gamedata_end, " (", &C000 - gamedata_end, " bytes free)"
+    ASSERT DATA_LOAD + gamedata_end - &8000 <= LOADER_ORG
+ENDSECTION
+
 \ The original's attribute file, kept exactly as the original's
 \ (decision 5): page-aligned, so a Z80 attribute address's high byte
 \ (&58-&5A) becomes ours by adding ATTR_HI.
@@ -316,9 +320,10 @@ ENDIF
 .lit_lo         SKIP 256
 .spread_hi      SKIP 256        ; draw.6502's
 .spread_lo      SKIP 256
-.litmask        SKIP 256
+.unlit          SKIP 256
 .pat_even       SKIP 256        ; the rows' ink patterns (room.6502's make_patterns)
 .pat_odd        SKIP 256
+    ASSERT pat_odd = pat_even + 256     ; (xor_run: + the line's parity)
 .scen_ink       SKIP 768        ; each cell's scenery ink (draw.6502)
 .work_end
     PRINT "code &0E00-&", ~code_end, ", workspace to &", ~work_end, " (", screen - work_end, " bytes free)"
