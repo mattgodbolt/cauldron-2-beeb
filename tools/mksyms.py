@@ -42,7 +42,11 @@ def strip(text):
 
 
 def main():
-    syms_out, stubs_out, *files = sys.argv[1:]
+    args = sys.argv[1:]
+    # --soft: stubs just return (to try what's written past what isn't).
+    soft = "--soft" in args
+    args = [a for a in args if a != "--soft"]
+    syms_out, stubs_out, *files = args
     used_code, defined, used_data = set(), set(), set()
     for f in files:
         if f in (syms_out, stubs_out):
@@ -65,7 +69,7 @@ def main():
     with open(stubs_out, "w") as f:
         f.write("\\ Made by tools/mksyms.py: the original's routines not yet transcribed.\n")
         for n in missing:
-            f.write(f".z{n} LDA #LO({n}) : LDX #HI({n}) : JMP unwritten\n")
+            f.write(f".z{n} RTS\n" if soft else f".z{n} LDA #LO({n}) : LDX #HI({n}) : JMP unwritten\n")
     if missing:
         print(f"mksyms: {len(missing)} routines not yet transcribed: "
               + " ".join(str(n) for n in missing[:20]) + (" ..." if len(missing) > 20 else ""))

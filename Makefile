@@ -24,7 +24,7 @@
 #                 (tools/spritecases.py, tools/spritecheck.mjs)
 
 PYTHON  ?= .venv/bin/python
-BARON   ?= $(firstword $(wildcard ../baron/build/src/baron) baron)
+BARON   ?= $(firstword $(wildcard ../baron/build/src/baron $(HOME)/dev/baron/build/src/baron) baron)
 # Baron, failing on a warning too (every disc builds with --warn 2).
 ASM      = BARON=$(BARON) tools/asm.sh
 # The jsbeeb model the test tools use (tools/beeb.mjs reads CAULDRON_MODEL).
@@ -50,13 +50,13 @@ all: $(TARGET)
 
 $(TARGET): $(SOURCES) $(GENERATED) tools/mksyms.py | build
 	@python3 tools/lint_labels.py > /dev/null || python3 tools/lint_labels.py
-	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	python3 tools/mksyms.py $(if $(SOFT),--soft) build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
 	$(ASM) -D 'BUILD="$(BUILD)"' $(DEMO) -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) -v -log0 build/listing.txt src/main.6502
 
 # The viewer: the same game, but a key after the title goes to the viewer
 # (room.6502), which draws the rooms for the checks. Its own symbols.
 $(VIEWER): $(SOURCES) $(GENERATED) tools/mksyms.py | build
-	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	python3 tools/mksyms.py $(if $(SOFT),--soft) build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
 	$(ASM) -D 'BUILD="$(BUILD)"' -D VIEWER=1 -o $@ --title VIEWER --opt 3 --warn 2 --symbols $(@:.ssd=.json) -log0 build/viewer.txt src/main.6502
 
 # The oracle: every room drawn by the original's own code.
