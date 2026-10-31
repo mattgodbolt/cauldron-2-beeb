@@ -325,14 +325,20 @@ palette's workspace sits after the variables, below page `&0D`;
 The build's `PRINT`s give what's left. Fitting more will take moving
 code into sideways RAM or packing the rooms (decision 9's 16K work).
 
-## 17. The sprite routines live in GAMEDATA (2026-10-31, provisional)
+## 17. Most of the sprite drawing lives in GAMEDATA (2026-10-31, provisional)
 
-The sprite routines (57058-57194 and their colour, `sprite_ink`; the
-pre-shift 57415) read GAMEDATA's tables (the frame attributes 60422, the
-frame table 59798 and the frames), so they can only run with GAMEDATA
-paged in, which it is whenever they're called. `draw.6502` reopens the
-`GameData` section for them, so they take its spare bytes rather than
-main RAM's: making the XOR and the pre-shift fast (a run of bytes along a
-cell row at a time) takes more code than main RAM had. Both builds'
-`PRINT`s give what's left. The room drawing's tile loop, which runs with
-ROOMDATA in, calls none of them.
+The sprite routines read GAMEDATA's tables (the frame attributes 60422,
+the frame table 59798 and the frames, the line table 58931), so they
+only run with GAMEDATA paged in, which it is whenever they're called.
+Making the XOR and the pre-shift fast takes more code than main RAM had,
+so `draw.6502` reopens the `GameData` section for the XOR (`xor_down`,
+`xor_lines`), `sprite_ink`, 57058, 57182 and 57194; the clipped draw
+57074 and the pre-shift 57415 stay in main RAM, as GAMEDATA hasn't room
+for them too. The patterns take 8 bytes a row a parity (`pat_even`,
+`pat_odd`), and the tile-bank list and the viewer's variables sit in the
+rest of their two pages. The builds' `PRINT`s give what's left. The room
+drawing's tile loop, which runs with ROOMDATA in, calls none of these.
+
+What `xor_down` keeps from one call to the next (a run's address, its
+row, whether it stayed on its cell row) is fixed zero page (`xr_cache`),
+as it outlives any call.
