@@ -178,3 +178,39 @@ How the port got here, in order: what worked and what didn't.
   per-object work spills past a VSync where the original's doesn't. By
   instruction timings the XOR is still several times the Z80's per byte
   (colour costs a read, masks and a pattern); the pre-shift about the Z80's.
+
+## 2026-10-31: where the frames go, and the interrupt
+
+- `make timeline` (tools/zxtimeline.py, tools/timeline.mjs,
+  tools/timecmp.py) logs every wait for a frame on both machines, pass
+  by pass, with the work before each charged to the routines on the
+  call stack; a wait that ends a frame later here than on the original
+  is a frame lost. `make passes` ends with each scenario's frames
+  against the original's (tools/framecmp.py).
+- A frame is lost where the work since the last wait ran past a VSync
+  the original's didn't: over the scenarios (2026-10-31) 1577 at the
+  mover's HALT (56256), 186 at the heads' (53727, 53771), 146 at the
+  room's (54509, its drawing) and 13 at 54225. In idle97 the original's
+  15-19ms of work between two of the mover's waits is 21-26ms here.
+  Against the original's time: the XOR (57058, 57194) 2.3-2.8 times,
+  the heads (53651, their XOR) 1.4, the player's collision (54530 1.3,
+  55095 1.5), the interrupt several times; the pre-shift (57415)
+  0.7-0.9 and the still slots' waits the same. Lost frames with no
+  still slot in their work (idle56, right56, fire56) are the XOR's
+  alone.
+- The interrupt took about 850us a frame against the original's 70:
+  57664 saved and restored the registers' zero page every frame, and
+  each screen carried a split that changed nothing so that split 0 landed
+  at line 8. Now the tune is called without HL (nothing at VSync touches
+  the registers), VSync's T1 count reaches the first split wherever it
+  is (`split_count`), and a split reads one record: about 500us. Every
+  displayed line's palette is unchanged (title, menu, game, all 128
+  rooms, sampled mid-line in jsbeeb before and after).
+- The hook now runs before VSync's palette writes: `make music`'s bass
+  medians (5 half-cycles a note) had hung on where the tick's strike
+  fell against the title's splits.
+- 55095 tests a unit's two pixels in the one byte of ours they're in,
+  the row's address worked out once.
+- The still slot's wait (`wait_us`) measures 7626-7666us here, the
+  original's 7608us plus its interrupt when one lands in the loop: as
+  it should be.

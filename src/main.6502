@@ -38,9 +38,7 @@ glyph_ink   = ZP_FIXED + 13     ; the ink 54464 writes in (draw.6502)
 machine     = ZP_FIXED + 14     ; OSBYTE 0's X, read by C2's loader (input.6502's joy_init)
 xr_cache    = ZP_FIXED + 15     ; xor_down's working, kept from one run to the next (draw.6502; 8 bytes)
 irq_x       = ZP_FIXED + 23     ; the interrupted X (irq.6502)
-vsync_n     = ZP_FIXED + 24     ; the entries of frame_ula the next VSync writes
-vsync_need  = ZP_FIXED + 25     ; ... and the ones after it
-ZP_END      = ZP_FIXED + 26
+ZP_END      = ZP_FIXED + 24
     ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
 
 SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF

@@ -32,17 +32,10 @@
     ASL A : ASL A : ASL A : ASL A : ORA zx_tmp
     RTS
 
-\ Z clear (BNE) if unit X (0-3: two pixels each, from the left) of the
-\ Spectrum byte at HL is lit, as LD A,(HL) : AND PIXEL_MASKS[X] (61158)
-\ would find: only the one of our bytes it's in, and its two pixels' bits
-\ (pixel p is bits 7 - p and 3 - p). A and Y changed; X and HL kept.
-.zx_unit_lit
-    LDY rl
-    LDA rh : AND #7 : ORA zx_lo,Y : STA zx_ptr
-    LDA rh : AND #&18 : ASL A : ADC zx_hi,Y : STA zx_ptr+1   ; (as zx_addr)
-    LDY unit_half,X : LDA (zx_ptr),Y : AND unit_lit,X
-    RTS
-.unit_half  EQUB 0, 0, 8, 8
+\ Unit X's lit bits in our byte (0-3: two pixels each, from the left; the
+\ first two in the cell's left byte, the others in its right): pixel p is
+\ bits 7 - p and 3 - p. LD A,(HL) : AND PIXEL_MASKS[X] (61158) is that
+\ byte AND this.
 .unit_lit   EQUB &CC, &33, &CC, &33
 
 \ The tables (init_zxscreen): by L, our address's low byte (but the line)

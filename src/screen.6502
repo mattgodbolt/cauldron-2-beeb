@@ -12,7 +12,6 @@
     LDA crtc_regs+1,X : STA crtc_data
     DEX : DEX : BPL crtc
     LDA #0 : STA vsyncs : STA splits_on : STA vsync_hook+1
-    LDA #16 : STA vsync_n : STA vsync_need     ; (all of frame_ula)
     JMP install_irq
 }
 

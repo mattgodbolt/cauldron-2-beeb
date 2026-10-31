@@ -19,10 +19,7 @@
 \ A screen's colours are a palette program: the sixteen entries VSync
 \ writes (frame_ula) and up to MAX_SPLITS splits, each one logical colour
 \ at a line set by T1 (split_first, then each split's record in
-\ split_rec: its four writes and the latch it sets). The interrupts run
-\ every frame, so they're kept short: VSync rewrites only
-\ the logical colours some split changes, after the first frame of a
-\ program; a split's record is all it reads.
+\ split_rec: its four writes and the latch it sets, all a split reads).
 \ ***************************************************************************
 
 \ The &FE21 value for entry i showing physical colour phys.
@@ -93,17 +90,16 @@ FUNCTION t1_period(lines) = lines * SL - 2
     LDA split_first+3 : STA usrvia_t1lh
 .palette
     \ The hook first, so the music's timing (the bass's edges against the
-    \ splits) doesn't hang on how many entries the screen rewrites; its
-    \ longest, an explosion's pulse, ends well before the picture starts.
+    \ splits) doesn't hang on the palette's writes; its longest, an
+    \ explosion's pulse, ends well before the picture starts.
     LDA vsync_hook+1 : BEQ entries_in     ; (the sound's, once it has one)
     JSR call_hook
 .entries_in
-    LDX vsync_n                     ; (frame_ula's last vsync_n, from the end)
+    LDX #15
 .entries
-    LDA frame_ula-1,X : STA ula_pal
-    DEX : BNE entries
-    STX irq_split                   ; 0
-    LDA vsync_need : STA vsync_n
+    LDA frame_ula,X : STA ula_pal
+    DEX : BPL entries
+    INX : STX irq_split             ; 0
     JMP done
 .call_hook
     JMP (vsync_hook)
@@ -115,9 +111,8 @@ FUNCTION t1_period(lines) = lines * SL - 2
 FOR l = 0..3
     EQUB ula_base(l) * 16
 NEXT
-\ frame_ula's order: logical 3's four entries, then 2's, 1's and 0's, so
-\ VSync's first 4 * (4 - l) cover every logical colour from l up. Each
-\ slot's entry, as &FE21's high nybble.
+\ frame_ula's order (logical 3's four entries, then 2's, 1's and 0's):
+\ each slot's entry, as &FE21's high nybble.
 .slot_entry
 FOR s = 0..15
     EQUB (ula_base(3 - s DIV 4) + (s AND 2) * 2 + (s AND 1)) * 16
@@ -129,11 +124,11 @@ NEXT
 \ count from VSync to split 0 (split_count), the periods from each split
 \ to the next (t1_period), and &FFFF, &FFFF after the last. Called with
 \ the splits off or from the main program: it turns them off while it
-\ writes, and the next VSync writes all sixteen entries.
+\ writes.
 .set_palette
 {
     ZA_AUTO2 pp
-    ZA_AUTO1 n, cnt, l, phys, need
+    ZA_AUTO1 n, cnt, l, phys
     STA pp : STY pp+1
     LDA #0 : STA splits_on
     LDY #0 : LDA (pp),Y : STA n
@@ -143,17 +138,12 @@ NEXT
     TXA : LSR A : LSR A : EOR #3 : TAY : INY
     LDA (pp),Y : EOR #7 : ORA slot_entry,X : STA frame_ula,X
     DEX : BPL entry
-    LDA #4 : STA need               ; (at least logical 3's: VSync's loop runs)
     LDA n : BEQ none
-    \ The splits' writes, and the slots VSync rewrites to undo them.
+    \ The splits' writes.
     STA cnt
     LDX #0 : LDY #5
 .split
     LDA (pp),Y : STA l : INY
-    EOR #3 : ASL A : ASL A : ADC #4 ; 4 * (4 - l)
-    CMP need : BCC covered
-    STA need
-.covered
     LDA (pp),Y : EOR #7 : STA phys : INY
     TYA : PHA
     LDY l : LDA split_base,Y : ORA phys
@@ -177,13 +167,8 @@ NEXT
     LDA (pp),Y : STA split_rec+5,X : INY
     TXA : CLC : ADC #SPLIT_REC : TAX
     DEC cnt : BNE latch
-    JSR all
     LDA #1 : STA splits_on
-    RTS
 .none
-.all
-    LDA need : STA vsync_need
-    LDA #16 : STA vsync_n
     RTS
 }
 
