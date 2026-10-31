@@ -102,7 +102,7 @@ The BBC's 2MHz 6502 has more to do than the 3.5MHz Z80 did, colouring
 each sprite's pixels as it draws them. The aim is play as smooth as
 it can be, not the original's timing: with the sprite drawing, the
 interrupt, the room drawing and the sound's pulses reworked, the test
-scenarios take 0.89 of the original's frames all told, and a room draws
+scenarios take 0.87 of the original's frames all told, and a room draws
 in about half the original's time (2026-10-31; `make passes` prints the
 frames, `make timeline` says which run over and why).
 
