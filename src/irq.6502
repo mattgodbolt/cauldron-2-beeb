@@ -80,6 +80,11 @@ FUNCTION t1_period(lines) = lines * SL - 2
     LDA &FC                         ; the interrupted A, saved by the OS
     RTI
 .not_t1
+    LDA pulse_on : BEQ not_pulse    ; (a pulse's end: sound.6502's T2)
+    LDA sysvia_ifr : AND #SV_T2 : BEQ not_pulse
+    JSR pulse_end
+    JMP done
+.not_pulse
     LDA sysvia_ifr : AND #2 : BEQ done
     STA sysvia_ifr                  ; acknowledge
     INC vsyncs

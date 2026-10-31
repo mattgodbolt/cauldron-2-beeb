@@ -165,24 +165,29 @@ SECTION RoomData
 }
 
 \ Room A's tiles, with ROOMDATA in: its pack unpacked, its colours, then
-\ the scenery as 53979-54151 draws it.
+\ the scenery as 53979-54151 draws it: each cell of rows 4-23 gets its
+\ tile's pixels and attribute, which is all the original's order leaves.
+\ Here a character row at a time, left to right, so a row's addresses are
+\ worked out once and a cell's are the one before's + 1 (+ 16 on the
+\ screen); a tile byte's bank lookup is made once a room (tile_info).
 .room_tiles
 {
     ZA_AUTO1 room
-    ZA_AUTO2 p
     ZA_AUTO2 layout
     ZA_AUTO2 block
-    ZA_AUTO2 base
-    ZA_AUTO1 brow
-    ZA_AUTO1 bcol
-    ZA_AUTO1 trow
-    ZA_AUTO1 tcol
-    ZA_AUTO1 tile
-    ZA_AUTO1 attr, row, col, pe, po
+    ZA_AUTO2 arow
+    ZA_AUTO2 srow
+    ZA_AUTO2 p
     ZA_AUTO2 q, q8
+    ZA_AUTO1 row, col, r8, trow4, bend, pe, po
     STA room
     JSR room_unpack
     LDA room : JSR room_colours
+    \ No tile byte looked up yet (tile_hi 0: the tiles are in ROOMDATA).
+    LDA #0 : TAX
+.forget
+    STA tile_hi,X
+    INX : BNE forget
     \ The layout (the original's 43750 + 40 * room): room_buf + 40 * the
     \ room's place in its pack.
     LDA #LO(room_buf) : STA layout : LDA #HI(room_buf) : STA layout+1
@@ -193,76 +198,53 @@ SECTION RoomData
 .same_page
     DEX : BNE next_layout
 .laid_out
-    LDA #0 : STA brow
-.block_row
-    LDA #0 : STA bcol
+    LDA #4 : STA row
+    LDA #LO(a24097 + 4 * 32) : STA arow : LDA #HI(a24097 + 4 * 32) : STA arow+1
+    LDA #LO(scen_ink + 4 * 32) : STA srow : LDA #HI(scen_ink + 4 * 32) : STA srow+1
+    LDA #LO(screen + 4 * 512) : STA q : ORA #8 : STA q8
+    LDA #HI(screen + 4 * 512) : STA q+1 : STA q8+1
+    ASSERT (LO(screen) AND 15) = 0
+.each_row
+    LDA row : ASL A : ASL A : ASL A : STA r8
+    SEC : SBC #4 * 8 : AND #3 * 8 : LSR A : STA trow4  ; ((row - 4) AND 3) * 4
+    LDA #0 : STA col
 .each_block
-    \ The block: 39654 + 16 * its number.
+    \ The block's tile row: 39654 + 16 * its number + 4 * the tile row.
     LDY #0 : LDA (layout),Y : STA block : STY block+1
-    ASL block : ROL block+1 : ASL block : ROL block+1
-    ASL block : ROL block+1 : ASL block : ROL block+1
-    LDA block : CLC : ADC #LO(a39654) : STA block
+    ASL A : ROL block+1 : ASL A : ROL block+1
+    ASL A : ROL block+1 : ASL A : ROL block+1
+    ORA trow4                       ; (16 * the number: its low four bits clear)
+    CLC : ADC #LO(a39654) : STA block
     LDA block+1 : ADC #HI(a39654) : STA block+1
-    LDA #0 : STA trow
-.tile_row
-    LDA #0 : STA tcol
+    LDA col : CLC : ADC #4 : STA bend
 .each_tile
-    LDA trow : ASL A : ASL A : ORA tcol : TAY
-    LDA (block),Y : STA tile
-    \ The bank.
-    LDA #0 : STA base : STA base+1
-    LDX bank_list : BEQ no_bank
-    LDY #1
-.bank
-    LDA tile : CMP bank_list,Y : BCC next_bank       ; below lo
-    CMP bank_list+1,Y : BEQ found : BCC found        ; up to hi
-.next_bank
-    INY : INY : INY : INY
-    DEX : BNE bank
-    JMP no_bank
+    LDA col : AND #3 : TAY
+    LDA (block),Y : TAX
+    LDA tile_hi,X : BNE known
+    JSR tile_info
+.known
+    \ Its attribute into the buffer (24097 + its attribute offset, as
+    \ 57341 gives it) and its ink as its scenery's: the ink colours its
+    \ pixels (the original reads the attribute after them).
+    LDY col
+    LDA tile_attr,X : STA (arow),Y
+    AND #7 : STA (srow),Y
+    LDY tile_blank,X : BEQ lit      ; (most cells: no pixel lit)
+    LDA #0
+FOR i = 0..7
+    LDY #i : STA (q),Y : STA (q8),Y
+NEXT
+    JMP next_cell
     ZA_UNREACHABLE
-.found
-    LDA bank_list+2,Y : STA base
-    LDA bank_list+3,Y : STA base+1
-.no_bank
-    \ Its attribute, 48870 + ((base + byte) AND 8191), first: its ink
-    \ colours the pixels (the original reads it after them).
-    LDA tile : CLC : ADC base : STA p
-    LDA base+1 : ADC #0 : AND #&1F : STA p+1
-    LDA p : CLC : ADC #LO(a48870) : STA p
-    LDA p+1 : ADC #HI(a48870) : STA p+1
-    LDY #0 : LDA (p),Y : STA attr
-    AND #7 : STA glyph_ink
-    \ The cell: row trow + 4 * brow + 4, column tcol + 4 * bcol. Its
-    \ attribute into the buffer (24097 + its attribute offset, as 57341
-    \ gives it) and its ink as its scenery's.
-    LDA brow : ASL A : ASL A : ADC trow : ADC #4 : STA row  ; (C clear)
-    LDA bcol : ASL A : ASL A : ADC tcol : STA col
-    LDA row : LSR A : LSR A : LSR A : STA p+1               ; row * 32 + col
-    LDA row : ASL A : ASL A : ASL A : ASL A : ASL A : ORA col : STA p
-    LDA p : CLC : ADC #LO(a24097) : STA q
-    LDA p+1 : ADC #HI(a24097) : STA q+1
-    LDY #0 : LDA attr : STA (q),Y
-    LDA p+1 : CLC : ADC #HI(scen_ink) : STA p+1
-    ASSERT LO(scen_ink) = 0
-    LDA glyph_ink : STA (p),Y
-    \ Its pixels, 34526 + 8 * (base + byte) (in 16 bits, as the original
-    \ forms it), written as 54464 writes them, straight into our cell.
-    LDA tile : CLC : ADC base : STA p
-    LDA base+1 : ADC #0 : STA p+1
-    ASL p : ROL p+1 : ASL p : ROL p+1 : ASL p : ROL p+1
-    LDA p : CLC : ADC #LO(a34526) : STA p
-    LDA p+1 : ADC #HI(a34526) : STA p+1
-    LDA col : ASL A : ASL A : ASL A : ASL A : STA q         ; (col AND 15) * 16
-    LDA row : ASL A : STA q+1
-    LDA col : LSR A : LSR A : LSR A : LSR A : CLC : ADC q+1
-    ADC #HI(screen) : STA q+1
-    LDA q : ORA #8 : STA q8 : LDA q+1 : STA q8+1
-    LDA row : ASL A : ASL A : ASL A : ORA glyph_ink : TAX       ; (row * 8 + ink)
+.lit
+    LDY tile_hi,X : STY p+1
+    LDY tile_lo,X : STY p
+    ORA r8 : TAX                   ; (row * 8 + ink)
     LDA pat_even,X : STA pe
     LDA pat_odd,X : STA po
+    \ Its pixels, written as 54464 writes them, straight into our cell.
     LDY #0
-.line
+FOR i = 0..3
     LDA (p),Y : TAX
     LDA spread_hi,X : AND pe : STA (q),Y
     LDA spread_lo,X : AND pe : STA (q8),Y
@@ -270,25 +252,94 @@ SECTION RoomData
     LDA (p),Y : TAX
     LDA spread_hi,X : AND po : STA (q),Y
     LDA spread_lo,X : AND po : STA (q8),Y
-    INY : CPY #8 : BNE line
-    INC tcol : LDA tcol : CMP #4 : BEQ done1
+    IF i < 3
+        INY
+    ENDIF
+NEXT
+.next_cell
+    \ The next cell: 16 bytes on.
+    LDA q : CLC : ADC #16 : STA q : ORA #8 : STA q8
+    BCC same_half
+    INC q+1 : INC q8+1
+.same_half
+    INC col : LDA col : CMP bend : BEQ block_done
     JMP each_tile
     ZA_UNREACHABLE
-.done1
-    INC trow : LDA trow : CMP #4 : BEQ done2
-    JMP tile_row
-    ZA_UNREACHABLE
-.done2
+.block_done
     INC layout : BNE laid : INC layout+1
 .laid
-    INC bcol : LDA bcol : CMP #8 : BEQ done3
+    LDA col : CMP #32 : BEQ row_done
     JMP each_block
     ZA_UNREACHABLE
-.done3
-    INC brow : LDA brow : CMP #5 : BEQ done4
-    JMP block_row
+.row_done
+    \ The next row: the layout back to the block row's start unless the
+    \ next row starts a block row; q has moved on 512 by itself.
+    LDA layout : SEC : SBC #8 : STA layout
+    BCS back : DEC layout+1
+.back
+    LDA arow : CLC : ADC #32 : STA arow : BCC a_nc : INC arow+1
+.a_nc
+    LDA srow : CLC : ADC #32 : STA srow : BCC s_nc : INC srow+1
+.s_nc
+    INC row : LDA row
+    CMP #SCREEN_ROWS : BEQ done
+    AND #3 : BNE next_row
+    LDA layout : CLC : ADC #8 : STA layout
+    BCC next_row : INC layout+1
+.next_row
+    JMP each_row
     ZA_UNREACHABLE
-.done4
+.done
+    \ The ink 54464 was given last, as the original's drawing leaves it.
+    LDA scen_ink + SCREEN_ROWS * 32 - 1 : STA glyph_ink
+    RTS
+}
+
+\ Tile byte X's tile, through the room's bank list: the first (lo, hi,
+\ base) with lo <= byte <= hi adds base, else 0. Its pixels' address
+\ (tile_lo, tile_hi: 34526 + 8 * (base + byte), in 16 bits, as the
+\ original forms it), its attribute (tile_attr: 48870 + ((base + byte)
+\ AND 8191)) and whether none of its pixels is lit (tile_blank not 0).
+\ A = tile_hi's; X kept.
+.tile_info
+{
+    ZA_AUTO2 base
+    ZA_AUTO2 t
+    ZA_AUTO2 ap
+    LDA #0 : STA base : STA base+1
+    STX t
+    LDA bank_list : BEQ no_bank : STA ap
+    LDY #1
+.bank
+    LDA t : CMP bank_list,Y : BCC next_bank ; below lo
+    LDA bank_list+1,Y : CMP t : BCS found   ; up to hi
+.next_bank
+    INY : INY : INY : INY
+    DEC ap : BNE bank
+    JMP no_bank
+    ZA_UNREACHABLE
+.found
+    LDA bank_list+2,Y : STA base
+    LDA bank_list+3,Y : STA base+1
+.no_bank
+    TXA : CLC : ADC base : STA t
+    LDA base+1 : ADC #0 : STA t+1
+    \ The attribute.
+    LDA t : CLC : ADC #LO(a48870) : STA ap
+    LDA t+1 : AND #&1F : ADC #HI(a48870) : STA ap+1
+    LDY #0 : LDA (ap),Y : STA tile_attr,X
+    \ The pixels.
+    ASL t : ROL t+1 : ASL t : ROL t+1 : ASL t : ROL t+1
+    LDA t : CLC : ADC #LO(a34526) : STA tile_lo,X : STA ap
+    LDA t+1 : ADC #HI(a34526) : STA tile_hi,X : STA ap+1
+    \ Blank (no pixel lit) or not.
+    LDY #7 : LDA #0
+.lit
+    ORA (ap),Y
+    DEY : BPL lit
+    CMP #1 : LDA #0 : ROL A         ; (C clear: none lit)
+    EOR #1 : STA tile_blank,X
+    LDA tile_hi,X
     RTS
 }
 ENDSECTION
@@ -376,9 +427,13 @@ SECTION RoomData
 \ shows as white.
 .pair_a     EQUB 1, 2, 3, 1, 1, 2
 .pair_b     EQUB 1, 2, 3, 2, 3, 3
+PAT_PAIRS = 6
+PAT_SOLID = 3                     ; (the first three: a = b)
+\ Each pair's patterns: a b a b on even lines, b a b a on odd.
+FUNCTION ab_byte(a, b) = (cbyte(a) AND &AA) OR (cbyte(b) AND &55)
+.pair_even  EQUB ab_byte(1, 1), ab_byte(2, 2), ab_byte(3, 3), ab_byte(1, 2), ab_byte(1, 3), ab_byte(2, 3)
+.pair_odd   EQUB ab_byte(1, 1), ab_byte(2, 2), ab_byte(3, 3), ab_byte(2, 1), ab_byte(3, 1), ab_byte(3, 2)
 .pop3       EQUB 0, 1, 1, 2, 1, 2, 2, 3
-.cb_aa      FOR c = 0..3 : EQUB cbyte(c) AND &AA : NEXT
-.cb_55      FOR c = 0..3 : EQUB cbyte(c) AND &55 : NEXT
 .zx_to_bbc  EQUB 7, 4, 1, 5, 2, 6, 3, 7     ; (ink 0 as white)
 
 .make_patterns
@@ -388,47 +443,68 @@ SECTION RoomData
     ZA_AUTO1 ink
     ZA_AUTO1 want
     ZA_AUTO1 best
-    ZA_AUTO1 ba
-    ZA_AUTO1 bb
+    ZA_AUTO1 bj
     ZA_AUTO1 s
-    ZA_AUTO1 j
+    ZA_AUTO 6, both                 ; each pair's colours: a OR b
+    ZA_AUTO 6, extra                ; ... and a dither's 1 + 2 * shared
+    ASSERT PAT_PAIRS = 6
     LDA #0 : STA row
 .each_row
     LDX row
+    \ A row with the colours of one above (most: a room has few splits)
+    \ has its patterns too.
+    LDY row
+.earlier
+    DEY : BPL compare
+    JMP pick
+    ZA_UNREACHABLE
+.compare
+    LDA rp1,X : CMP rp1,Y : BNE earlier
+    LDA rp2,X : CMP rp2,Y : BNE earlier
+    LDA rp3,X : CMP rp3,Y : BNE earlier
+    TYA : ASL A : ASL A : ASL A : STA s
+    TXA : ASL A : ASL A : ASL A : TAY
+    LDX s
+FOR i = 0..7
+    LDA pat_even+i,X : STA pat_even+i,Y
+    LDA pat_odd+i,X : STA pat_odd+i,Y
+NEXT
+    JMP done5
+    ZA_UNREACHABLE
+.pick
     LDA rp1,X : STA q+1
     LDA rp2,X : STA q+2
     LDA rp3,X : STA q+3
+    \ What of a pair's score doesn't hang on the ink.
+    LDX #PAT_PAIRS - 1
+.pair
+    LDY pair_b,X : LDA q,Y : STA s
+    LDY pair_a,X : LDA q,Y : ORA s : STA both,X : ZA_INDEXEDBY 0..5
+    LDA #0
+    CPX #PAT_SOLID : BCC solid
+    LDA q,Y : AND s : TAY
+    LDA pop3,Y : ASL A : ADC #1     ; (C clear)
+.solid
+    STA extra,X : ZA_INDEXEDBY 0..5
+    DEX : BPL pair
+    LDA row : ASL A : ASL A : ASL A : STA s     ; (row * 8 + ink)
     LDA #0 : STA ink
 .each_ink
     LDX ink : LDA zx_to_bbc,X : STA want
     LDA #255 : STA best
-    LDA #1 : STA ba : STA bb
-    LDA #0 : STA j
+    LDX #0
 .each_pair
-    LDX j
-    LDY pair_b,X
-    LDA pair_a,X : TAX
-    LDA q,X : ORA q,Y : EOR want : TAX
-    LDA pop3,X : ASL A : ASL A : STA s
-    LDX j
-    LDA pair_a,X : CMP pair_b,X : BEQ solid
-    TAX : LDA q,X : AND q,Y : TAX
-    LDA pop3,X : ASL A : SEC : ADC s : STA s    ; + 1 + 2 * shared
-.solid
-    LDA s : CMP best : BCS worse
-    STA best
-    LDX j
-    LDA pair_a,X : STA ba
-    LDA pair_b,X : STA bb
+    LDA both,X : ZA_INDEXEDBY 0..5 : EOR want : TAY
+    LDA pop3,Y : ASL A : ASL A : ADC extra,X : ZA_INDEXEDBY 0..5    ; (C clear: at most 12 + 7)
+    CMP best : BCS worse
+    STA best : STX bj
 .worse
-    INC j : LDA j : CMP #6 : BNE each_pair
-    \ a b a b on even lines, b a b a on odd.
-    LDA row : ASL A : ASL A : ASL A : ORA ink : TAY
-    LDX ba : LDA cb_aa,X : LDX bb : ORA cb_55,X : STA pat_even,Y
-    LDX bb : LDA cb_aa,X : LDX ba : ORA cb_55,X : STA pat_odd,Y
-    INC ink : LDA ink : CMP #8 : BEQ done5
-    JMP each_ink
-    ZA_UNREACHABLE
+    INX : CPX #PAT_PAIRS : BNE each_pair
+    LDX bj
+    LDA s : ORA ink : TAY
+    LDA pair_even,X : STA pat_even,Y
+    LDA pair_odd,X : STA pat_odd,Y
+    INC ink : LDA ink : CMP #8 : BNE each_ink
 .done5
     INC row : LDA row : CMP #SCREEN_ROWS : BEQ done6
     JMP each_row

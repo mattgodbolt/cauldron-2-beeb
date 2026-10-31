@@ -278,6 +278,13 @@ ENDSECTION
 \ plans. After ROOMDATA's bytes, so not in the file.
 SECTION RoomBuf, org = roomdata_end, virtual = TRUE
 .room_buf       SKIP ROOM_PACK * (40 + 10)
+\ Each tile byte's tile for the room drawn (room.6502's tile_info): its
+\ pixels' address (tile_hi 0: not looked up yet), its attribute, and
+\ whether none of its pixels is lit.
+.tile_lo        SKIP 256
+.tile_hi        SKIP 256
+.tile_attr      SKIP 256
+.tile_blank     SKIP 256
 .room_buf_end
     PRINT "ROOMDATA &8000-&", ~roomdata_end, ", its buffer to &", ~room_buf_end, " (", &C000 - room_buf_end, " bytes free)"
     ASSERT room_buf_end <= &C000

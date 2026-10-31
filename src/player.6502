@@ -286,6 +286,8 @@
 \ B, C, DE and HL are changed (the callers keep them).
 .z54970
 {
+    ZA_AUTO2 p
+    ZA_AUTO1 page
     LDA rc : CMP #191 : BCS clear
     CMP #33 : BCS test
 .clear
@@ -293,9 +295,13 @@
     RTS
 .test                               ; (54981)
     LDA rl : STA a24040 : LDA rh : STA a24040+1
+    \ The row's address, ours, once for 55095's three calls (as zx_addr).
+    LDY rl
+    AND #7 : ORA zx_lo,Y : STA p
+    LDA rh : AND #&18 : ASL A : ADC zx_hi,Y : STA page
     LDA a24077+6 : CLC : ADC #3
     LDX #3 : STX rb
-    JSR z55095 : BEQ feet
+    JSR units : BEQ feet
     JSR z57326 : JSR z57355
     STA a24014                      ; (STA keeps 57355's Z)
     BNE feet
@@ -306,13 +312,13 @@
     LDA a24077+6 : CMP #12 : BCC edge   ; (SUB 12, JR C)
     LDA a24077+6 : CLC : ADC #1
     LDX #2 : STX rb
-    JSR z55095 : BEQ right_foot
+    JSR units : BEQ right_foot
     JSR z57326 : JSR z57355 : BNE right_foot
     LDA a24031 : ORA #8 : STA a24031
 .right_foot                         ; (55051)
     LDA a24077+6 : CLC : ADC #6
     LDX #1 : STX rb
-    JSR z55095 : BEQ edge
+    JSR units : BEQ edge
     JSR z57326 : JSR z57355 : BNE edge
     LDA a24031 : ORA #4 : STA a24031
 .edge                               ; (55082)
@@ -321,23 +327,17 @@
     LDA #0 : STA a24031             ; Z: both
 .done
     RTS
-}
 
 \ 55095 TEST_UNITS: B X units from unit A, on the row at 24040. Z clear
 \ (NZ) if one is lit, with HL its screen byte. Units off the screen (X - 12
 \ not 0-127) are skipped. (The original returns the unit - 12 in A and C;
 \ its callers don't read them; nor HL after a miss, which is left alone.)
-\ The row is ours once: 24040 is a row's start (x = 0, from 57307, moved
-\ a line at a time), so unit u's byte is ours at the row's address + u * 4
-\ AND &1F8 (the byte * 16 and its half * 8), its pixels unit_lit's.
-.z55095
-{
-    ZA_AUTO2 p
-    ZA_AUTO1 page
+\ The row is ours once (p, page, which 54970 works out): 24040 is a row's
+\ start (x = 0, from 57307, moved a line at a time), so unit u's byte is
+\ ours at the row's address + u * 4 AND &1F8 (the byte * 16 and its half
+\ * 8), its pixels unit_lit's.
+.units
     SEC : SBC #12 : STA rc
-    LDY a24040
-    LDA a24040+1 : AND #7 : ORA zx_lo,Y : STA p
-    LDA a24040+1 : AND #&18 : ASL A : ADC zx_hi,Y : STA page   ; (as zx_addr)
 .unit                               ; (55097)
     LDA rc : CMP #128 : BCS next
     ASL A : ASL A : AND #&F8 : TAY
@@ -358,6 +358,7 @@
     PLA                             ; (not 0: NZ)
     RTS
 }
+z55095 = z54970.units
 
 \ 55131 MOVE_UP: test up to STEP_ROWS[v] rows above the sprite. A hit on
 \ the k-th row: dy = k (the top overlaps the ceiling by one) and a flip;
@@ -417,23 +418,17 @@
 \ original's PUSH DE, BC, HL and POPs do; restore_regs keeps the flags
 \ TEST_ROW returns.
 .save_regs
-{
-    LDX #5
-.each
-    LDA rc,X : STA saved_regs,X
-    DEX : BPL each
+FOR i = 0..5
+    LDA rc+i : STA saved_regs+i
+NEXT
     RTS
-}
 .restore_regs
-{
     PHP
-    LDX #5
-.each
-    LDA saved_regs,X : STA rc,X
-    DEX : BPL each
+FOR i = 0..5
+    LDA saved_regs+i : STA rc+i
+NEXT
     PLP
     RTS
-}
     ASSERT rh = rc + 5 AND rb = rc + 1 AND re = rc + 2 AND rd = rc + 3 AND rl = rc + 4
 .saved_regs
     EQUB 0, 0, 0, 0, 0, 0

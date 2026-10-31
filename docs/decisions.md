@@ -277,6 +277,9 @@ skips its writes but keeps its time (the original's would end the main
 program's pulse early). `make music` times pulses of six effects against
 4v T-states.
 
+Later the same day: the width is timed by the System VIA's T2 except
+while the music plays (decision 22).
+
 ## 14. The menu and the keys in the BBC's idiom (2026-10-31, provisional)
 
 The original's menu (52481) offers its machine's controls: 1 Kempston,
@@ -512,3 +515,29 @@ ROOMDATA in for its reads instead of GAMEDATA; and GAMEDATA's
 room-entry tables (the monster lists 61677-62953, the tile-bank lists
 62954-63497) could join the room packs, if the code reading them took
 them from a copy as it does the bank list.
+
+## 22. A pulse timed by a timer, not by the CPU (2026-10-31, provisional)
+
+Decision 13 timed each pulse's width (1.2-15ms) with a busy loop, as the
+original's: the main program, or the VSync interrupt for the explosion,
+did nothing else while a pulse sounded. In play the sweeps pulse at
+every slot of every pass, so that loop was the biggest single wait the
+port had that wasn't the original's pacing (6.6% of idle play's time
+sampled, more than all of the player's collision).
+
+| | Frames over `make passes`' scenarios (2026-10-31; zx 15948) | The pulse |
+|---|---|---|
+| A. The loop (decision 13) | 15198 | the width exact; nothing runs meanwhile |
+| **B. The System VIA's T2** (chosen) | 14134 | the width exact (`make music`); the game runs on while it sounds |
+| (no pulse at all, to measure) | 14105 | |
+
+B: 52854 turns channel 2 on and starts T2 for the width; T2's interrupt
+(`irq_handler`, `pulse_end`) turns it off. A pulse waits for the one
+before to end, so the pulses still come one after another; the
+explosion's pulse from the interrupt is skipped while one sounds (it
+only took its time before). T2 is a bass channel's while the music
+plays (decision 12), so then (`mus_installed`) the loop times it as
+before, and the music taking T2 ends a pulse on it. The game's state is
+the same pass by pass; what changes is the sound's rhythm where the
+work between pulses got shorter: the sweeps' pitch is the calls' rate.
+For Matt's ear.

@@ -19,11 +19,13 @@
 \   which the ear doesn't hear, its volume switched each half-cycle by a
 \   System VIA timer, as the beeper switches its speaker.
 \ - A pulse is the same on the SN (decision 13): channel 2 at period 1,
-\   its volume on for the pulse's width, then off, timed by a loop as the
+\   its volume on for the pulse's width, then off, timed by the System
+\   VIA's T2 (decision 22), or while the music plays by a loop as the
 \   original's is.
 \
 \ Channels: the tunes' channel 1 on SN 0 (its bass on the System VIA's
-\ T2, one-shot), channel 2 on SN 1 (T1, free-running), the pulses on SN 2.
+\ T2, one-shot), channel 2 on SN 1 (T1, free-running), the pulses on SN 2
+\ (T2 when the music doesn't have it).
 \
 \ None of it uses zero page: the steps are called from the interrupt, the
 \ pulses from anywhere.
@@ -407,9 +409,12 @@ MUS_BASS = 2
 
 \ mus_irq onto IRQ1V, ahead of irq_handler, while the music plays.
 \ (Called with interrupts off. IRQ1V itself says whether it's on: should
-\ anything put irq_handler back, it goes on again.)
+\ anything put irq_handler back, it goes on again.) X and Y kept.
 .mus_install
 {
+    LDA pulse_on : BEQ free         ; (T2 becomes the bass's: a pulse on it ends)
+    JSR pulse_end
+.free
     LDA irq1v : CMP #LO(mus_irq) : BNE install
     LDA irq1v+1 : CMP #HI(mus_irq) : BEQ done
 .install
@@ -524,11 +529,94 @@ MUS_BASS = 2
 }
 
 \ 52854: one pulse, A the effect number (its width at 64027). From the
-\ main program: the pulse holds the chip (sfx_busy). X and Y kept, as is
-\ HL.
+\ main program. X and Y kept, as is HL.
+\
+\ The pulse is timed by the System VIA's T2 (decision 22), its end
+\ turned off by the interrupt (pulse_end), so the game runs on while it
+\ sounds; a pulse waits for the one before to end, as the original's
+\ come one after another. While the music plays, T2 is its bass's, and
+\ the pulse is timed by a loop as the original's is (pulse_loop).
 .z52854
 {
     STX pulse_x : STY pulse_y
+    PHA
+    JSR pulse_us
+    PLA
+.wait
+    LDX pulse_on : BNE wait         ; (the interrupt ends it)
+    PHP : SEI
+    LDX pulse_on : BNE again        ; (the interrupt started one meanwhile)
+    LDX mus_installed : BNE loop
+    JSR pulse_start
+    PLP
+    LDX pulse_x : LDY pulse_y
+    RTS
+.again
+    PLP
+    JMP wait
+.loop
+    PLP
+    JSR pulse_loop
+    LDX pulse_x : LDY pulse_y
+    RTS
+}
+.pulse_x    EQUB 0
+.pulse_y    EQUB 0
+.pulse_n    EQUW 0
+.pulse_on   EQUB 0                  ; a pulse sounds, timed by T2
+
+\ Channel 2 on and T2 started for pulse_t microseconds, its interrupt on.
+\ (Interrupts off.)
+.pulse_start
+    JSR sound_init
+    LDX #SN_PULSE : LDA #SN_LOUD : JSR sn_volume
+    LDA pulse_t : STA sv_t2cl
+    LDA pulse_t+1 : STA sv_t2ch     ; (starts it)
+    LDA #&80 OR SV_T2 : STA sysvia_ier
+    LDA #1 : STA pulse_on
+    RTS
+
+\ From the interrupt, at T2's end (irq.6502), or the music's taking T2
+\ (mus_install): the pulse off. X and Y kept.
+.pulse_end
+    LDA sv_t2cl                     ; (acknowledges it)
+    LDA #SV_T2 : STA sysvia_ier
+    TXA : PHA : TYA : PHA
+    LDX #SN_PULSE : LDA #SN_OFF : JSR sn_volume
+    PLA : TAY : PLA : TAX
+    LDA #0 : STA pulse_on
+    RTS
+
+\ Effect A's width for T2, pulse_t: 4 * v T-states (v the word at 64027
+\ + 2A) is v * 8 / 7 microseconds, v + v / 8 + v / 64 + v / 512 near
+\ enough, less PULSE_LATE, the time from the chip's volume write to T2's
+\ start and from T2's end to the next write (tools/musiccheck.mjs times
+\ the pulses). X changed.
+PULSE_LATE = 130
+.pulse_us
+{
+    ASL A : TAY
+    LDA a64027,Y : STA pulse_t : STA pulse_v
+    LDA a64027+1,Y : STA pulse_t+1 : STA pulse_v+1
+    LDX #3
+.term
+    LSR pulse_v+1 : ROR pulse_v : LSR pulse_v+1 : ROR pulse_v
+    LSR pulse_v+1 : ROR pulse_v
+    LDA pulse_t : CLC : ADC pulse_v : STA pulse_t
+    LDA pulse_t+1 : ADC pulse_v+1 : STA pulse_t+1
+    DEX : BNE term
+    LDA pulse_t : SEC : SBC #PULSE_LATE : STA pulse_t
+    BCS done
+    DEC pulse_t+1
+.done
+    RTS
+}
+.pulse_t    EQUW 0
+.pulse_v    EQUW 0
+
+\ The pulse effect A timed by a loop, as the original's: the pulse holds
+\ the chip (sfx_busy).
+.pulse_loop
     JSR pulse_width
     PHP : SEI
     INC sfx_busy
@@ -540,12 +628,7 @@ MUS_BASS = 2
     LDX #SN_PULSE : LDA #SN_OFF : JSR sn_volume
     DEC sfx_busy
     PLP
-    LDX pulse_x : LDY pulse_y
     RTS
-}
-.pulse_x    EQUB 0
-.pulse_y    EQUB 0
-.pulse_n    EQUW 0
 
 \ The width of effect A, as pulse_wait's count: about 4 * v T-states
 \ (v the word at 64027 + 2A) is v * 8 / 7 microseconds; pulse_wait's
@@ -588,28 +671,50 @@ PULSE_WRITES = 14
 }
 
 \ 57714: the interrupt's explosion pulse, A = 24000 (not 0), counted down:
-\ effect 50 + (count AND 31). With sfx_busy held the main program's pulse
-\ has the chip, and this one only takes its time. X and Y kept.
+\ effect 50 + (count AND 31). With a pulse sounding, that one has the
+\ chip, and this one is skipped. X and Y kept.
 .z57714
     SEC : SBC #1 : STA a24000
     AND #31 : CLC : ADC #50
-\ A pulse of effect A from the interrupt.
+\ A pulse of effect A from the interrupt: timed by T2 as the main
+\ program's (52854), or while the music plays by a loop, as the
+\ original's (a main program's pulse holding the chip, it only takes its
+\ time). pulse_us's and pulse_width's workings are put back: the main
+\ program may be in them.
 .pulse_irq
 {
-    STX pulse_x : STY pulse_y
-    JSR pulse_width
+    STX pulse_irq_x : STY pulse_irq_y
+    LDX pulse_on : BNE done
+    LDX mus_installed : BNE loop
+    TAY
+    LDA pulse_t : PHA : LDA pulse_t+1 : PHA
+    LDA pulse_v : PHA : LDA pulse_v+1 : PHA
+    TYA : JSR pulse_us
+    JSR pulse_start
+    PLA : STA pulse_v+1 : PLA : STA pulse_v
+    PLA : STA pulse_t+1 : PLA : STA pulse_t
+    JMP done
+.loop
+    TAY
+    LDA pulse_n : PHA : LDA pulse_n+1 : PHA
+    TYA : JSR pulse_width
     LDA sfx_busy : BNE quiet
     JSR sound_init
     LDX #SN_PULSE : LDA #SN_LOUD : JSR sn_volume
     JSR pulse_wait
     LDX #SN_PULSE : LDA #SN_OFF : JSR sn_volume
-    JMP done
+    JMP restore
 .quiet
     JSR pulse_wait
+.restore
+    PLA : STA pulse_n+1 : PLA : STA pulse_n
 .done
-    LDX pulse_x : LDY pulse_y
+    LDX pulse_irq_x : LDY pulse_irq_y
     RTS
 }
+.pulse_irq_x    EQUB 0
+.pulse_irq_y    EQUB 0
+
 
 \ 53798: one pulse of the witches' cackle: effect (24001 - 1) AND 31,
 \ counting down. Keeps every register.
