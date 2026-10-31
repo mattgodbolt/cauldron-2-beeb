@@ -302,3 +302,17 @@ How the port got here, in order: what worked and what didn't.
 - The unpacking costs a room change a frame now and then; skipping it
   when the group is already in the buffer, and packs of 4 rather than
   8, keep that to a few of the scenarios' room changes (decision 21).
+
+## 2026-10-31: room changes and pulses faster
+
+- The room's tiles drawn a character row at a time, the row's addresses
+  worked out once; each tile byte's bank lookup once a room
+  (`tile_info`, tables in ROOMDATA after the room buffer), and a blank
+  cell, four in five of them over the 128 rooms, written as zeros.
+  `make_patterns` copies a row's patterns from an earlier row with the
+  same colours and scores a pair once, not once an ink. A room's
+  drawing (54225's HALT to 54509's) took 17-18 frames against the
+  original's 14-16; now 7-8 (`make rooms`: all 128 identical).
+- The pulses timed by T2 (decision 22): `make passes`' scenarios from
+  15198 frames to 14134 (the original's 15948).
+- TEST_ROW's row address worked out once for its three 55095 calls.
