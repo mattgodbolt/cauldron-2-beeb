@@ -42,6 +42,7 @@
     LDA lit_lo,X : ASL A : ASL A : ASL A : ASL A : ORA lit_lo,X : EOR #&FF : STA unlit,X
     INX : BNE each
     STX xor_erase                   ; (0)
+    STX ps_pend
     RTS
 }
 
@@ -571,8 +572,15 @@ ENDSECTION
 \ the words enough), the image is shifted as it's copied, and then the
 \ stream's bytes past the buffer (the tail) in place; else the image is
 \ copied, then the whole stream shifted in place.
+\
+\ preshift_pair: 57415 into 24225, the next call 57415 into 24427, which
+\ shifts this call's tail (flush, decision 19).
+.preshift_pair
+    LDX #&80
+    BITABS
 .z57415
 {
+    LDX #0
     ZA_AUTO2 p                      ; the in-place shift's
     ZA_AUTO2 q                      ; the copy's
     ZA_AUTO2 gfx
@@ -580,7 +588,6 @@ ENDSECTION
     ZA_AUTO1 w
     ZA_AUTO1 lines
     ZA_AUTO1 m
-    ZA_AUTO1 words
     ZA_AUTO1 tl                     ; the tail's bytes - 1 (16 bits; -1: none)
     ZA_AUTO1 th
     ZA_AUTO1 k
@@ -588,55 +595,51 @@ ENDSECTION
     ZA_AUTO1 t
     ZA_AUTO1 yy
     ZA_AUTO1 frame
+    ZA_AUTO1 le
+    ZA_AUTO1 defer                  ; negative: preshift_pair's call
+    STX defer
     STA frame
-    \ The two bytes before the buffer, and 24052 = HL - 2.
-    LDA rl : SEC : SBC #2 : STA q : STA a24052
-    LDA rh : SBC #0 : STA q+1 : STA a24052+1
-    LDA #0 : TAY : STA (q),Y : INY : STA (q),Y
     \ The frame's width, height and graphics: 59798 + 4A.
-    LDA frame : STA gfx : LDA #0 : STA gfx+1
-    ASL gfx : ROL gfx+1 : ASL gfx : ROL gfx+1
-    LDA gfx : CLC : ADC #LO(a59798) : STA gfx
+    LDX #0 : STX gfx+1
+    ASL A : ROL gfx+1 : ASL A : ROL gfx+1
+    ADC #LO(a59798) : STA gfx       ; (C clear: gfx+1 was below 64)
     LDA gfx+1 : ADC #HI(a59798) : STA gfx+1
     LDY #0 : LDA (gfx),Y : STA w : STA rc
     INY : LDA (gfx),Y : STA rb
     INY : LDA (gfx),Y : TAX
     INY : LDA (gfx),Y : STA gfx+1 : STX gfx
+    LDA ps_pend : BEQ no_pend
+    JSR flush
+.no_pend
+    \ The two bytes before the buffer, and 24052 = HL - 2.
+    LDA rl : SEC : SBC #2 : STA q : STA a24052
+    LDA rh : SBC #0 : STA q+1 : STA a24052+1
+    LDA #0 : TAY : STA (q),Y : INY : STA (q),Y
     \ The shift: 2 * (x - 12) AND 7 pixels, k.
     LDA re : SEC : SBC #12 : ASL A : AND #7 : STA k
     BNE shift
-    JMP copy                        ; (none: the copy is all)
+    JSR copy                        ; (none: the copy is all)
+    JMP done
     ZA_UNREACHABLE
 .shift
     \ m = (h * (w + 1)) AND 255; Y <> 0 if it carried.
-    LDA #0 : TAY : LDX w : INX
-.mul
-    CLC : ADC rb
-    BCC mul_nc : INY
-.mul_nc
-    DEX : BNE mul
+    JSR size
     STA m
-    \ The words: m SRA, + its carry, + 1 (0 is 256).
-    CMP #&80 : ROR A                ; (SRA)
-    ADC #1                          ; (+ the carry it shifted out, + 1)
-    STA words
-    TYA : BNE to_stream
-    \ The tail's bytes - 1: 2 * words - m - 3.
-    LDA words : ASL A : STA tl
-    LDA #0 : ROL A : STA th
-    LDA words : BNE two_w
-    LDA #2 : STA th                 ; (256 words)
-.two_w
-    LDA tl : CLC : SBC m : STA tl   ; (- m - 1)
-    LDA th : SBC #0 : STA th
-    LDA tl : SEC : SBC #2 : STA tl
-    LDA th : SBC #0 : STA th
-    BPL fused
-    AND tl : CMP #&FF : BEQ fused   ; (-1: no tail)
+    \ The words, m SRA + its carry + 1 (0 is 256), make the tail's bytes
+    \ - 1, 2 * words - m - 3: -1 (none) for m even below 128, 255 for m
+    \ even from 128, one more for m odd; but m = 255 has 1 word, so a
+    \ stream short of the buffer.
+    CPY #0 : BNE to_stream
+    CMP #255 : BNE tail_size
 .to_stream
     JMP stream
     ZA_UNREACHABLE
-.fused
+.tail_size
+    LDX #&FF : TAY : BPL below : INX
+.below
+    LSR A
+    LDA #&FF : ADC #0 : STA tl
+    TXA : ADC #0 : STA th
     \ The stream's last byte: the tail's last, or with no tail the last
     \ line's zero. The first byte is it ASLed, << 8 - k; the second
     \ stays 0.
@@ -647,120 +650,173 @@ ENDSECTION
     LDA tl : JSR walk
     STY yy
 .no_tail
-    ASL A
     LDX k
 .first
     ASL A
-    INX : CPX #8 : BNE first
+    INX : CPX #9 : BNE first
     LDY #0 : STA (q),Y              ; (q = HL - 2)
     STY t                           ; (the byte before HL: 0)
-    JSR start_lines : BNE some
-    JMP tail
-    ZA_UNREACHABLE
-.some
-    LDX k : CPX #4 : BEQ f4_line : BCC f2_line
+    JSR start_lines : BEQ tail
+    \ Y: the byte in the frame, and q + Y its place in the buffer (q one
+    \ on at each line's zero); le: Y at the line's end; A = t = 0.
+    LDA w : STA le
+    TYA
+    LDX k : CPX #4 : BEQ f4_test : BCC f2_test : BCS f6_test
     \ Six bits: the byte >> 6, and the one before's low six bits on top.
-.f6_line
-    LDY #0 : CPY w : BEQ f6_zero
 .f6_byte
-    LDA (gfx),Y
-.f6_put
-    TAX : ASL A : ROL A : ROL A : AND #3 : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    ASL A : ROL A : ROL A : AND #3 : ORA t : STA (q),Y
     TXA : ASL A : ASL A : STA t
-    INY : CPY w : BCC f6_byte : BEQ f6_zero
-    JSR next_line : BNE f6_line
+    INY
+.f6_test
+    CPY le : BNE f6_byte
+    JSR line_end : BNE f6_test
     BEQ tail                        ; (always)
-.f6_zero
-    LDA #0 : BEQ f6_put             ; (always)
-.f4_line
-    LDY #0 : CPY w : BEQ f4_zero
 .f4_byte
-    LDA (gfx),Y
-.f4_put
-    TAX : LSR A : LSR A : LSR A : LSR A : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    LSR A : LSR A : LSR A : LSR A : ORA t : STA (q),Y
     TXA : ASL A : ASL A : ASL A : ASL A : STA t
-    INY : CPY w : BCC f4_byte : BEQ f4_zero
-    JSR next_line : BNE f4_line
+    INY
+.f4_test
+    CPY le : BNE f4_byte
+    JSR line_end : BNE f4_test
     BEQ tail                        ; (always)
-.f4_zero
-    LDA #0 : BEQ f4_put             ; (always)
-.f2_line
-    LDY #0 : CPY w : BEQ f2_zero
 .f2_byte
-    LDA (gfx),Y
-.f2_put
-    TAX : LSR A : LSR A : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    LSR A : LSR A : ORA t : STA (q),Y
     TXA : ROR A : ROR A : ROR A : AND #&C0 : STA t
-    INY : CPY w : BCC f2_byte : BEQ f2_zero
-    JSR next_line : BNE f2_line
-    BEQ tail                        ; (always)
-.f2_zero
-    LDA #0 : BEQ f2_put             ; (always)
+    INY
+.f2_test
+    CPY le : BNE f2_byte
+    JSR line_end : BNE f2_test
 .tail
     \ The tail in place, after the last line's zero.
-    LDA th : BPL has_tail
-    JMP done
-    ZA_UNREACHABLE
-.has_tail
+    LDA th : BMI done
+    \ preshift_pair's first call, its tail 256 bytes or so from below
+    \ 24425: left to the second call (flush).
+    BIT defer : BPL now
+    LDA m : BPL now
+    CMP #a24425 - a24225 : BCS now
+    STA ps_m
+    ADC tl : SEC : SBC #a24427 - a24225 - 1 : STA ps_end    ; (C clear: BCS)
+    LDA k : STA ps_pend
+    BNE done                        ; (always)
+.now
     LDY yy
-    LDA #0 : BEQ in_place           ; (always)
+    LDA #0 : JSR in_place
+.done
+    INC rc
+    LDA frame
+    RTS
 .stream
+    \ The whole stream, from 24052 (q): 2 * words bytes.
+    LDA q : STA p : LDA q+1 : STA p+1
     JSR copy
-    \ The whole stream, from 24052: 2 * words bytes.
-    LDA a24052 : STA p : LDA a24052+1 : STA p+1
-    LDA words : SEC : SBC #1
+    LDA m : CMP #&80 : ROR A        ; (SRA)
+    ADC #0                          ; (+ the carry it shifted out: the words - 1)
     ASL A : ORA #1 : TAX
     LDA #0 : ROL A : STA th
     TXA : JSR walk
+    ASL A : JSR in_place            ; (the last byte ASLed before the first)
+    JMP done
+    ZA_UNREACHABLE
+
+\ The bytes from p, Y and pages as walk leaves them, shifted right by k
+\ in place, A the byte before the first.
 .in_place
-    \ A = the byte before the first; p, Y, pages as walk leaves them.
     LDX k : CPX #4 : BEQ k4 : BCS k6
     \ Two bits: two carry chains, the first's carry in C, the second's in
     \ t's bit 0 (ROR t keeps the first's while the second's turns, ROL t
-    \ swaps them back). The second's starts as that byte's bit 0.
-    STA t                           ; (C clear: CPX, BCS)
+    \ swaps them back). They start as that byte's bits 0 and 1.
+    LSR A : STA t
 .k2
     LDA (p),Y : ROR A : ROR t : ROR A : ROL t : STA (p),Y
     INY : BNE k2
     INC p+1 : DEC pages : BPL k2
-    BMI done                        ; (always)
+    RTS
 .k4
-    ASL A : ASL A : ASL A : ASL A : ASL A : STA t   ; (that byte ASLed) << 4
+    ASL A : ASL A : ASL A : ASL A : STA t   ; (that byte << 4)
 .k4_byte
     LDA (p),Y : TAX
     LSR A : LSR A : LSR A : LSR A : ORA t : STA (p),Y
     TXA : ASL A : ASL A : ASL A : ASL A : STA t
     INY : BNE k4_byte
     INC p+1 : DEC pages : BPL k4_byte
-    BMI done                        ; (always)
+    RTS
 .k6
-    ASL A : ASL A : ASL A : STA t   ; (that byte ASLed) << 2
+    ASL A : ASL A : STA t           ; (that byte << 2)
 .k6_byte
     LDA (p),Y : TAX
     ASL A : ROL A : ROL A : AND #3 : ORA t : STA (p),Y
     TXA : ASL A : ASL A : STA t
     INY : BNE k6_byte
     INC p+1 : DEC pages : BPL k6_byte
-.done
-    INC rc
-    LDA frame
     RTS
 
 \ Each line's w bytes, then a zero, from HL.
 .copy
     JSR start_lines : BEQ copied
+    LDY #0 : CLC
 .copy_line
-    LDY #0 : CPY w : BEQ zero
+    \ Y as the fused copy's, but taken back to 0 (q and gfx on by it)
+    \ before a line would run it past 255 (or with C set, as after one
+    \ that was).
+    TYA : ADC w : BCC copy_go
+    TYA : CLC : ADC q : STA q
+    BCC cl1 : INC q+1
+.cl1
+    TYA : CLC : ADC gfx : STA gfx
+    BCC cl2 : INC gfx+1
+.cl2
+    LDY #0
+.copy_go
+    LDX w : BEQ zero
 .copy_byte
     LDA (gfx),Y : STA (q),Y
-    INY : CPY w : BNE copy_byte
+    INY : DEX : BNE copy_byte
 .zero
-    LDA #0 : STA (q),Y
-    INY
-    JSR next_line : BNE copy_line
+    TXA : STA (q),Y
+    INC q : BNE cl3 : INC q+1
+.cl3
+    DEC lines : BNE copy_line
 .copied
-    LDA k : BEQ done
     RTS
+
+\ A = (h * (w + 1)) AND 255, Y = its high byte.
+.size
+    LDA #0 : TAY : LDX w : INX
+.mul
+    CLC : ADC rb
+    BCC mul_nc : INY
+.mul_nc
+    DEX : BNE mul
+    RTS
+
+\ preshift_pair's deferred tail (A = ps_pend, its k; from 24225 + ps_m
+\ to 24427 + ps_end), shifted now as it would have been, but for the
+\ bytes from 24425 to the end of this call's image (24427 + B * (C + 1)),
+\ which this call writes over before anything reads them. Each part is
+\ walked as (p),Y with Y running up to 255 at its last byte.
+.flush
+    STA k
+    LDA #0 : STA ps_pend : STA pages
+    \ After the image, the byte before it as it was. (An image of 256
+    \ bytes or more covers the tail; past its low byte, the part shifted
+    \ here is written over, all the same.)
+    JSR size
+    CMP ps_end : BCS before
+    TAX : SEC : SBC ps_end : TAY    ; (C clear after: X < ps_end)
+    LDA ps_end : ADC #LO(a24427 - 256) : STA p
+    LDA #HI(a24427 - 256) : ADC #0 : STA p+1
+    LDA a24427 - 1,X
+    JSR in_place
+.before
+    \ Before 24425, after the line's zero.
+    LDA #LO(a24425 - 256) : STA p
+    LDA #HI(a24425 - 256) : STA p+1
+    LDA ps_m : CLC : ADC #LO(256 - (a24425 - a24225)) : TAY
+    LDA #0 : STA pages
+    JMP in_place
 
 \ q = HL; lines = B (Z set: none).
 .start_lines
@@ -768,14 +824,14 @@ ENDSECTION
     LDA rb : STA lines
     RTS
 
-\ Past a line of Y bytes in the buffer, w in the frame. Z set: the last.
-.next_line
-    TYA : CLC : ADC q : STA q
-    BCC nl1 : INC q+1
-.nl1
-    LDA gfx : CLC : ADC w : STA gfx
-    BCC nl2 : INC gfx+1
-.nl2
+\ The fused copy's line end: its zero shifted, A = t, at q + Y; q on
+\ one; le the next line's end; A = t = 0. Z set: the last line.
+.line_end
+    STA (q),Y
+    INC q : BNE le1 : INC q+1
+.le1
+    TYA : CLC : ADC w : STA le
+    LDA #0 : STA t
     DEC lines
     RTS
 
@@ -785,10 +841,9 @@ ENDSECTION
 .walk
     EOR #&FF : STA yy
     LDA th : STA pages
-    LDA p : SEC : SBC yy : STA p
+    LDA p : SEC : SBC yy : STA p : STA at
     LDA p+1 : SBC #0 : STA p+1
     CLC : ADC pages : STA at+1      ; the last byte: at 255 in the last page
-    LDA p : STA at
     LDY #255 : LDA (at),Y
     LDY yy
     RTS

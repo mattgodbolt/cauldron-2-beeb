@@ -371,7 +371,7 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
     G_PUSH rhl : G_PUSH rhl
     LDX #4 : STX re : LDX #13 : STX rd  ; DE = 3332: the left head
     LDX #LO(a24225) : STX rl : LDX #HI(a24225) : STX rh
-    JSR z57415                          ; frame c, new buffer
+    JSR preshift_pair                   ; (57415) frame c, new buffer
     G_POP rhl
     JSR dec_hl
     LDY #0 : LDA (rhl),Y
@@ -384,7 +384,7 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
     G_PUSH rhl
     LDX #112 : STX re : LDX #13 : STX rd    ; DE = 3440
     LDX #LO(a24225) : STX rl : LDX #HI(a24225) : STX rh
-    JSR z57415
+    JSR preshift_pair                   ; (57415)
     G_POP rhl
     JSR dec_hl
     LDY #0 : LDA (rhl),Y : CLC : ADC #3

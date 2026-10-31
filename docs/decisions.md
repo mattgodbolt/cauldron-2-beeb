@@ -402,3 +402,17 @@ tick's half-cycles: the per-note count goes (`mus_edges`).
 start, its SN period (or a bass note's half-cycles and their spacing),
 its length held at that period, its volumes (struck once, never louder
 until it ends), and silence in each rest.
+
+## 19. A pre-shift pair's first tail is shifted by the second call (2026-10-31, provisional)
+
+Three places pre-shift two images back to back, the new into 24225 and
+then the old into 24427: a mover's redraw (56214), the heads' eyes
+(53823) and their cackle (53651). A frame of 128 bytes or more drags
+about 256 bytes of tail past its image (the original's signed halving),
+so the first call's tail runs over the second's buffer, which the second
+call then writes over. Those first calls go through `preshift_pair`: its
+tail is left to the second call, which shifts it first, as the original
+would have, but for the bytes from 24425 to the end of its own image.
+The bytes are the original's again by the second call's end; between
+the two calls only the callers' register saves run. `preshift_pair`
+assumes those two buffers, the only pair the original has.

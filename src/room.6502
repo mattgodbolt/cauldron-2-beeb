@@ -526,7 +526,7 @@ PANEL_RP3 = 2                       ; green
     STA frame
     LDA #4 : STA re : LDA #13 : STA rd
     LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
-    LDA frame : JSR z57415
+    LDA frame : JSR preshift_pair  ; (57415)
     LDA rb : STA lines : LDA rc : STA width
     LDA #LO(a24427) : STA rl : LDA #HI(a24427) : STA rh
     LDA #112 : STA re
