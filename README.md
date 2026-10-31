@@ -12,11 +12,18 @@ downloads it from Spectrum Computing for the tools.
 
 The disc at the root, `cauldron2.ssd`, is the latest build worth trying:
 
-- [Play it in jsbeeb](https://bbc.xania.org/?autoboot&disc1=github:mattgodbolt/cauldron-2-beeb/cauldron2.ssd)
-  (once the repository is on GitHub).
-- Or boot it on a BBC Micro or in any emulator (SHIFT-BREAK).
+- [Play it in jsbeeb (Master 128)](https://bbc.xania.org/?autoboot&model=Master&disc1=github:mattgodbolt/cauldron-2-beeb/cauldron2.ssd)
+- Or boot it on a BBC Micro with 32K of sideways RAM, a Master 128, or in
+  any emulator (SHIFT-BREAK).
 
-What works so far: the loading screen.
+Keys: **Z** left, **X** right, **:** up, **/** down, **RETURN** fire and
+bounce, **ESCAPE** abort. The menu: 1 keyboard, 2 joystick, 3 define
+keys, 4 play.
+
+What works: the whole game, transcribed from the Spectrum's Z80: the
+title, the menu and credits, every room, the pumpkin, monsters, magic,
+the music and effects on the SN76489. Still to do: checking it pass by
+pass against the original, speed, and fitting a 16K sideways RAM B.
 
 ## Building
 
