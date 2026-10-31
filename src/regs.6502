@@ -1,0 +1,33 @@
+\ ***************************************************************************
+\ The Z80's registers, in fixed zero page by name, so each transcribed
+\ routine reads beside its original (docs/how-it-works.md). A is A; the
+\ flags are the 6502's where a routine's caller tests them, documented
+\ where they differ. Pairs are little-endian: rc then rb is BC, re then
+\ rd DE, rl then rh HL, so (rc) works as a pointer to BC's address.
+\ ***************************************************************************
+
+ZP_REGS = &50
+rc   = ZP_REGS + 0      ; BC
+rb   = ZP_REGS + 1
+rbc  = rc
+re   = ZP_REGS + 2      ; DE
+rd   = ZP_REGS + 3
+rde  = re
+rl   = ZP_REGS + 4      ; HL
+rh   = ZP_REGS + 5
+rhl  = rl
+rixl = ZP_REGS + 6      ; IX
+rixh = ZP_REGS + 7
+rix  = rixl
+riyl = ZP_REGS + 8      ; IY
+riyh = ZP_REGS + 9
+riy  = riyl
+ra2  = ZP_REGS + 10     ; the alternate set, where a routine uses it
+rf2  = ZP_REGS + 11
+rc2  = ZP_REGS + 12
+rb2  = ZP_REGS + 13
+re2  = ZP_REGS + 14
+rd2  = ZP_REGS + 15
+rl2  = ZP_REGS + 16
+rh2  = ZP_REGS + 17
+ZP_REGS_END = ZP_REGS + 18

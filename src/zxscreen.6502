@@ -1,0 +1,52 @@
+\ ***************************************************************************
+\ The Spectrum's screen, read through ours. The transcription keeps the
+\ original's screen addresses (16384-22527) in its registers and does its
+\ arithmetic on them as the original does (INC H for the next line, the
+\ character-row tables); only the access translates. Our screen keeps
+\ exactly the original's lit pixels (decision 5), so a Spectrum byte is
+\ the lit pixels of two of ours: the cell's left four at +0 and its right
+\ four at +8.
+\
+\ A Spectrum screen address: H = 010 y7 y6 y2 y1 y0, L = y5 y4 y3 x4-x0.
+\ Ours: screen + (y DIV 8) * 512 + x * 16 + (y AND 7).
+\ ***************************************************************************
+
+\ zx_ptr = our address of the Spectrum screen address in rl/rh (HL).
+\ A, X and Y are changed; HL is kept.
+.zx_addr
+{
+    LDX rl
+    LDA rh : AND #7 : ORA zx_lo,X : STA zx_ptr
+    LDA rh : AND #&18 : ASL A : ADC zx_hi,X : STA zx_ptr+1   ; (C clear: AND #&18, ASL)
+    RTS
+}
+
+\ A = the lit pixels of the Spectrum byte at HL (as the original's LD A,(HL)
+\ would read them). Y = 0; X changed; HL kept.
+.zx_read
+    JSR zx_addr
+\ ... or at zx_ptr, already ours.
+.zx_read_ptr
+    LDY #8 : LDA (zx_ptr),Y : TAX : LDA lit_lo,X : STA zx_tmp
+    LDY #0 : LDA (zx_ptr),Y : TAX : LDA lit_hi,X : ORA zx_tmp
+    RTS
+
+\ The tables (init_zxscreen): by L, our address's low byte (but the line)
+\ and high byte (but the third); by one of our bytes, its lit pixels as
+\ the high or low nibble of a Spectrum byte.
+.init_zxscreen
+{
+    LDX #0
+.each
+    TXA : AND #&1F : ASL A : ASL A : ASL A : ASL A : STA zx_lo,X  ; (x AND 15) * 16
+    TXA : LSR A : LSR A : LSR A : LSR A : LSR A : ASL A : STA zx_tmp ; row bits * 2
+    TXA : AND #&10 : LSR A : LSR A : LSR A : LSR A                   ; x DIV 16
+    ORA zx_tmp : CLC : ADC #HI(screen) : STA zx_hi,X
+    \ A byte's lit pixels: bit 7-4 of a nibble pair (pixel 0 is bits 7
+    \ and 3), as four bits.
+    TXA : LSR A : LSR A : LSR A : LSR A : STA zx_tmp
+    TXA : ORA zx_tmp : AND #&0F : STA lit_lo,X
+    ASL A : ASL A : ASL A : ASL A : STA lit_hi,X
+    INX : BNE each
+    RTS
+}

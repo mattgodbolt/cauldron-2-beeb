@@ -35,8 +35,9 @@ BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short 
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES) $(GENERATED) | build
+$(TARGET): $(SOURCES) $(GENERATED) tools/mksyms.py | build
 	@python3 tools/lint_labels.py > /dev/null || python3 tools/lint_labels.py
+	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
 	$(ASM) -D 'BUILD="$(BUILD)"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) -v -log0 build/listing.txt src/main.6502
 
 build/data/title.scr: original/CauldronII.tap tools/tapblock.py

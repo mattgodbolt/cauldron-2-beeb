@@ -22,3 +22,11 @@
 .done
     RTS
 }
+
+\ Wait Y * 256 + X microseconds on the User VIA's timer 2 (one-shot): the
+\ original's busy loops of T T-states become a wait of T / 3.5 us.
+.wait_us
+    STX usrvia_t2cl : STY usrvia_t2ch       ; starts it; clears its flag
+.wait_t2
+    LDA usrvia_ifr : AND #&20 : BEQ wait_t2
+    RTS

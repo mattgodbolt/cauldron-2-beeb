@@ -9,6 +9,8 @@
 \ ***************************************************************************
 
 INCLUDE "defs.6502"
+INCLUDE "regs.6502"
+INCLUDE "../build/syms.6502"
 
 \ The build stamp comes from the Makefile (-D BUILD="date time sha"), so a
 \ disc says what it is: *TYPE !BOOT shows it. A + after the sha means the
@@ -25,7 +27,10 @@ vsyncs      = ZP_FIXED + 0      ; VSyncs so far (irq.6502)
 splits_on   = ZP_FIXED + 1      ; the palette splits run (irq.6502)
 irq_split   = ZP_FIXED + 2      ; 4 * the next split
 vsync_hook  = ZP_FIXED + 3      ; called at VSync if its high byte isn't 0 (2 bytes)
-ZP_END      = ZP_FIXED + 5
+unwritten_at = ZP_FIXED + 5     ; the original's address of a stub reached (2 bytes)
+zx_ptr      = ZP_FIXED + 7      ; zxscreen.6502's: our screen address (2 bytes)
+zx_tmp      = ZP_FIXED + 9
+ZP_END      = ZP_FIXED + 10
     ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
 
 SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF
@@ -47,7 +52,7 @@ LD_DST = &82
 SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filename = "C2"
 .payload
     SECTION Code, org = &0E00, guard = screen
-    ZA_POOL &00..ZP_FIXED-1
+    ZA_POOL &00..ZP_REGS-1
 .code_start
 
 .start
@@ -55,18 +60,36 @@ SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filena
     ZA_ENTRY
     LDX #&FF : TXS
     JSR init_system
+    JSR init_zxscreen
     LDA #LO(title_palette) : LDY #HI(title_palette) : JSR set_palette
     JSR screen_on
 }
 .shown                              ; (global: the tools run to here)
     JSR any_key : BEQ shown
-.stop
-    JMP stop
+    JMP z52180                      ; the original's entry (game.6502)
+
+\ A transcribed routine called one not yet written (build/stubs.6502):
+\ stop, with the original's address in unwritten_at for the tools.
+.unwritten
+    STA unwritten_at : STX unwritten_at+1
+    SEI
+.unwritten_stop
+    JMP unwritten_stop
 
     INCLUDE "system.6502"
     INCLUDE "irq.6502"
     INCLUDE "screen.6502"
+    INCLUDE "zxscreen.6502"
+    INCLUDE "draw.6502"
+    INCLUDE "room.6502"
+    INCLUDE "game.6502"
+    INCLUDE "objects.6502"
+    INCLUDE "player.6502"
+    INCLUDE "input.6502"
+    INCLUDE "frontend.6502"
+    INCLUDE "sound.6502"
     INCLUDE "../build/data/title.6502"
+    INCLUDE "../build/stubs.6502"
 .code_end
     ENDSECTION
 .payload_end
@@ -102,11 +125,31 @@ SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filena
     ASSERT loader_end <= screen      ; (TITLE loads over the screen after it)
 ENDSECTION
 
+\ The original's attribute file, kept exactly as the original's
+\ (decision 5): page-aligned, so a Z80 attribute address's high byte
+\ (&58-&5A) becomes ours by adding ATTR_HI.
+SECTION Attrs, org = &0400, virtual = TRUE
+.attrs      SKIP 768
+ENDSECTION
+ATTR_HI = HI(attrs) - &58
+\ The original's variables, object slots and buffers (24000-25099), in
+\ its own layout: aNNNNN names each (tools/mksyms.py). Pages 4 to &0C are
+\ the OS's and BASIC's, free once the game owns the machine.
+SECTION Vars, org = &0700, virtual = TRUE
+.vars       SKIP 25100 - 24000
+    ASSERT P% <= &0D00              ; (page &0D: the NMI and the Master's vectors)
+ENDSECTION
+
 \ The game's workspace, after its code: not in the file.
 SECTION Work, org = code_end, guard = screen, virtual = TRUE
 .frame_ula      SKIP 16         ; the palette VSync writes (irq.6502)
 .split_ula      SKIP 4 * MAX_SPLITS ; each split's four writes
 .split_latch    SKIP 2 * (MAX_SPLITS + 1)   ; T1's periods
+    ALIGN &100
+.zx_lo          SKIP 256        ; zxscreen.6502's tables
+.zx_hi          SKIP 256
+.lit_hi         SKIP 256
+.lit_lo         SKIP 256
 .work_end
     PRINT "code &0E00-&", ~code_end, ", workspace to &", ~work_end, " (", screen - work_end, " bytes free)"
 ENDSECTION
