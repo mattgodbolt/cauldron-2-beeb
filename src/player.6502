@@ -8,8 +8,8 @@
 \ 4 left, 8 right), +4 dx, +5 dy, +6 X, +7 Y, +13 animation state, +18
 \ height.
 \
-\ Collision reads the Spectrum's screen (sprites included) with zx_read
-\ on the original's screen addresses, doing the original's arithmetic on
+\ Collision reads the Spectrum's screen (sprites included) with
+\ zx_unit_lit on the original's screen addresses, doing the original's arithmetic on
 \ HL, and the attributes through 57326 and 57355.
 \
 \ Routines called here, and what this code needs of them (the original's
@@ -260,7 +260,7 @@
 .row                                ; (54937)
     LDA rc : CMP #191 : BCS none
     CMP #33 : BCC none
-    JSR zx_read : AND re : BNE done
+    JSR zx_unit_lit : BNE done          ; (LD A,(HL) : AND E)
     INC rc
     \ the next pixel line down
     INC rh : LDA rh : AND #7 : BNE next
@@ -337,7 +337,7 @@
     LDA a24040+1 : ADC #0 : STA rh
     LDA rc : AND #3 : TAX
     LDA a61158,X : STA re           ; PIXEL_MASKS
-    JSR zx_read : AND re : BNE done
+    JSR zx_unit_lit : BNE done          ; (LD A,(HL) : AND E)
 .next                               ; (55126)
     LDA rc : CLC : ADC #1
     DEC rb : BNE unit
