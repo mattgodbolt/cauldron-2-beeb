@@ -342,3 +342,9 @@ drawing's tile loop, which runs with ROOMDATA in, calls none of these.
 What `xor_down` keeps from one call to the next (a run's address, its
 row, whether it stayed on its cell row) is fixed zero page (`xr_cache`),
 as it outlives any call.
+
+Later the same day: `xor_down` and `xr_cache` gave way to `xor_seg`
+(and `xor_line`), which take a character row's lines in one call, so
+nothing outlives a call; the XOR's routines in GAMEDATA are now
+`xor_lines`, `xor_line` and `xor_seg` (journal, "the XOR a character row
+at a time").
