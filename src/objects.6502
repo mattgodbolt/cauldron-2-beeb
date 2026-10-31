@@ -1,3 +1,957 @@
 \ ***************************************************************************
-\ Objects and monsters: spawning, the mover (55783), collisions and their handlers, respawn, the rules.
+\ Objects and monsters: spawning at room entry (54229, 54264), respawn
+\ (55285), the slot routines, the mover (55783, which sets the game's
+\ pace), collisions and their handlers, the rules (56521-56966).
+\ docs/research/monsters.md. A slot is 20 bytes at 24077 + 20 * slot,
+\ through rix: LDY #n : LDA (rix),Y is LD A,(IX+n).
 \ ***************************************************************************
+
+\ HL = the address of the original's table at n (a BBC address).
+MACRO G_HL n
+    LDX #LO(n) : STX rl : LDX #HI(n) : STX rh
+ENDMACRO
+MACRO G_DE n
+    LDX #LO(n) : STX re : LDX #HI(n) : STX rd
+ENDMACRO
+
+\ ---------------------------------------------------------------------------
+\ 54229 SpawnItem: this room's magic refill (61521, bit 7 clear) in
+\ slot 5 as anim 32 at its position (61573).
+.z54229
+{
+    LDA a24030
+    LDX #0
+.find
+    CMP a61521,X : BEQ found            ; (a taken one has bit 7 set)
+    INX : CPX #52 : BNE find
+    RTS
+.found
+    TXA : ASL A : TAX
+    LDA a61573,X : STA re
+    LDA a61573+1,X : STA rd
+    LDA #0 : STA rc                     ; BC = 8192: anim 32, move 0
+    LDA #32 : STA rb
+    LDA #5
+    JMP z55363
+}
+
+\ 54264 SpawnMonsters: the room's list (61677) into slots 2 onwards,
+\ except what the inventory holds.
+.z54264
+{
+    LDA a24030
+    G_HL a61677
+    JSR z57395
+    LDA rl : STA a24042 : STA rixl
+    LDA rh : STA a24042+1 : STA rixh
+    JSR z56700
+    AND rc : STA a24011                 ; this room's done bit
+    LDY #0 : LDA (rix),Y
+    BNE some
+    RTS
+.some
+    STA rb
+    G_INC16 rixl
+    LDA #2
+.entry
+    G_PUSH rbc : PHA : PHA
+    LDY #0 : LDA (rix),Y : STA re
+    G_INC16 rixl
+    LDA (rix),Y : STA rd
+    G_INC16 rixl
+    LDA (rix),Y
+    BPL four
+    \ a fixed object: anim 61142[k AND 3], plus 1 if the room is done
+    AND #3
+    G_HL a61142
+    JSR z57408
+    STA rb
+    LDA a24011 : BEQ notdone
+    INC rb
+.notdone
+    LDA #0 : STA rc
+    JMP have
+.four
+    STA rc                              ; move, then anim
+    G_INC16 rixl
+    LDY #0 : LDA (rix),Y : STA rb
+.have
+    G_INC16 rixl
+    LDA rb : JSR z56729
+    BEQ held
+    PLA
+    JSR z55363
+.next
+    PLA : CLC : ADC #1
+    G_POP rbc
+    DEC rb : BNE entry
+    RTS
+.held
+    PLA
+    JMP next
+}
+
+\ ---------------------------------------------------------------------------
+\ 55285 Respawn: each 4-byte list entry's slot counts +19 down; at 0 it
+\ is spawned again. Not while going outside.
+.z55285
+{
+    LDA a24012 : BEQ go
+    RTS
+.go
+    LDA a24042 : STA rl : LDA a24042+1 : STA rh
+    LDY #0 : LDA (rhl),Y
+    BNE some
+    RTS
+.some
+    STA rb
+    LDA #LO(a24117) : STA rixl : LDA #HI(a24117) : STA rixh
+    LDA #20 : STA re : LDA #0 : STA rd
+    G_INC16 rl
+    LDA rl : STA riyl : LDA rh : STA riyh
+    LDA #2
+.entry
+    G_PUSH rde : G_PUSH rbc : PHA
+    LDY #2 : LDA (riy),Y : STA rc
+    BMI fixed                           ; 3 bytes, never respawned
+    LDY #19 : LDA (rix),Y
+    BEQ four
+    SEC : SBC #1 : STA (rix),Y
+    BNE four
+    LDY #0 : LDA (riy),Y : STA re
+    INY : LDA (riy),Y : STA rd
+    LDY #3 : LDA (riy),Y : STA rb
+    PLA : PHA
+    JSR z55363
+.four
+    G_INC16 riyl
+.fixed
+    G_INC16 riyl
+    G_INC16 riyl
+    G_INC16 riyl
+    PLA
+    G_POP rbc : G_POP rde
+    PHA
+    LDA rixl : CLC : ADC re : STA rixl
+    LDA rixh : ADC rd : STA rixh
+    PLA : CLC : ADC #1
+    DEC rb : BNE entry
+    RTS
+}
+
+\ 55363 Spawn: slot A = anim B, move C, at E, D; drawn. Sets CurSlot
+\ (24022), which the drawing reads. AF, DE, IX kept; HL is the frame's
+\ entry + 1, B its lines and C 4 x its width, as the original leaves them.
+.z55363
+{
+    STA a24022
+    G_PUSH rix : PHA : G_PUSH rde : G_PUSH rbc
+    JSR z57371
+    G_POP rbc : G_POP rde
+    LDA #0
+    LDY #2 : STA (rix),Y
+    LDY #14 : STA (rix),Y
+    LDY #0 : STA (rix),Y
+    LDY #12 : STA (rix),Y
+    LDY #19 : STA (rix),Y
+    LDA re : LDY #6 : STA (rix),Y : LDY #10 : STA (rix),Y
+    LDA rd : LDY #7 : STA (rix),Y : LDY #11 : STA (rix),Y
+    LDA rc : LDY #1 : STA (rix),Y
+    LDA rb : LDY #13 : STA (rix),Y
+    G_HL a60580
+    JSR z57395                          ; the anim's script
+    G_INC16 rl
+    LDY #0 : LDA (rhl),Y                ; its first frame
+    LDY #15 : STA (rix),Y : LDY #16 : STA (rix),Y
+    G_HL a24225
+    JSR z57415
+    JSR z57058                          ; drawn (xor_erase is 0)
+    LDY #15 : LDA (rix),Y
+    G_HL a59798
+    JSR z57385                          ; its frame's width and height
+    LDY #0 : LDA (rhl),Y
+    ASL A : ASL A : STA rc
+    LDA #140 : SEC : SBC rc : SEC : SBC #1
+    LDY #8 : STA (rix),Y                ; x limit
+    G_INC16 rl
+    LDA #191 : SEC : LDY #0 : SBC (rhl),Y
+    LDY #9 : STA (rix),Y                ; y limit
+    PLA
+    G_POP rix
+    RTS
+}
+
+\ 55472 ClearSlots: all six empty and still. IX kept; A = 0, B = 0,
+\ DE = 20.
+.z55472
+{
+    G_PUSH rix
+    LDA #6 : STA rb
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDA #20 : STA re : LDA #0 : STA rd
+.slot
+    LDA #0
+    LDY #0 : STA (rix),Y
+    LDY #3 : STA (rix),Y
+    LDY #4 : STA (rix),Y
+    LDY #5 : STA (rix),Y
+    LDY #19 : STA (rix),Y
+    LDY #1 : STA (rix),Y
+    LDY #13 : STA (rix),Y
+    LDA rixl : CLC : ADC #20 : STA rixl
+    BCC nc
+    INC rixh
+.nc
+    DEC rb : BNE slot
+    G_POP rix
+    LDA #0
+    RTS
+}
+
+\ 55512 StopSlot: slot A's +0 to +5 to 0. Everything kept.
+.z55512
+{
+    PHA : G_PUSH rhl : G_PUSH rde : G_PUSH rix
+    JSR z57371
+    LDA #0
+    LDY #0 : STA (rix),Y
+    LDY #1 : STA (rix),Y
+    LDY #2 : STA (rix),Y
+    LDY #4 : STA (rix),Y
+    LDY #5 : STA (rix),Y
+    LDY #3 : STA (rix),Y
+    G_POP rix : G_POP rde : G_POP rhl : PLA
+    RTS
+}
+
+\ 55551 RemoveSlot: slot A stopped, emptied and its sprite XORed off;
+\ +19 left alone. Everything kept, CurSlot too.
+.z55551
+{
+    PHA : G_PUSH rhl : G_PUSH rde : G_PUSH rbc : G_PUSH rix
+    STA rc
+    LDA a24022 : PHA
+    LDA rc : STA a24022
+    JSR z57371
+    LDA #0
+    LDY #0 : STA (rix),Y
+    LDY #1 : STA (rix),Y
+    LDY #3 : STA (rix),Y
+    LDY #4 : STA (rix),Y
+    LDY #5 : STA (rix),Y
+    LDY #12 : STA (rix),Y
+    LDY #13 : STA (rix),Y
+    LDY #10 : LDA (rix),Y : STA re
+    LDY #11 : LDA (rix),Y : STA rd
+    G_HL a24225
+    LDY #16 : LDA (rix),Y
+    JSR z57415
+    LDX #1 : STX xor_erase
+    JSR z57058
+    LDX #0 : STX xor_erase
+    PLA : STA a24022
+    G_POP rix : G_POP rbc : G_POP rde : G_POP rhl : PLA
+    RTS
+}
+
+\ 55624 SetAnim: slot A restarts anim B (not drawn); slots 2-5 are kept
+\ to x <= 134, y <= 170. Anim 5 (the explosion) starts its sound.
+\ Everything kept.
+.z55624
+{
+    PHA : G_PUSH rhl : G_PUSH rde : G_PUSH rbc : G_PUSH rix
+    PHA
+    JSR z57371
+    LDY #6 : LDA (rix),Y : STA re
+    LDY #7 : LDA (rix),Y : STA rd
+    PLA
+    CMP #0 : BEQ put
+    CMP #1 : BEQ put
+    LDA #134 : CMP re : BCS x_ok
+    STA re
+.x_ok
+    LDA #170 : CMP rd : BCS put
+    STA rd
+.put
+    LDA re : LDY #6 : STA (rix),Y
+    LDA rd : LDY #7 : STA (rix),Y
+    LDA #0
+    LDY #14 : STA (rix),Y
+    LDY #19 : STA (rix),Y
+    LDA rb : LDY #13 : STA (rix),Y
+    G_HL a60580
+    JSR z57395                          ; the anim's script
+    LDA #0 : LDY #12 : STA (rix),Y
+    G_INC16 rl
+    LDY #0 : LDA (rhl),Y                ; its first frame
+    LDY #15 : STA (rix),Y
+    G_HL a59798
+    JSR z57385
+    LDY #0 : LDA (rhl),Y
+    ASL A : ASL A : STA rc
+    LDA #139 : SEC : SBC rc
+    LDY #8 : STA (rix),Y
+    G_INC16 rl
+    LDA #191 : SEC : LDY #0 : SBC (rhl),Y
+    LDY #9 : STA (rix),Y
+    G_POP rix : G_POP rbc               ; (B: the anim again)
+    LDA rb : CMP #5 : BNE quiet
+    LDA #50 : STA a24000
+.quiet
+    G_POP rde : G_POP rhl : PLA
+    RTS
+}
+
+\ 55745 ChaseDir: A = the direction bits toward the pumpkin (24083,
+\ 24084) from slot IX; none on an axis where they are equal. BC kept.
+.z55745
+{
+    LDX #0
+    LDA a24083 : LDY #6 : CMP (rix),Y
+    BEQ vertical
+    BCC left
+    LDX #8 : BNE vertical               ; (always)
+.left
+    LDX #4
+.vertical
+    LDA a24084 : LDY #7 : CMP (rix),Y
+    BEQ done
+    BCC up
+    INX : INX                           ; (bit 1: X is 0, 4 or 8)
+    BNE done                            ; (always)
+.up
+    INX
+.done
+    TXA
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ 55783 ObjectsTick: every slot's anim step, movement and redraw, then
+\ its collisions. It sets the game's pace: a slot that changed waits
+\ for a frame (EI : HALT), one that didn't burns 1024 DEC BC loops.
+.z55783
+{
+    LDA #6 : STA rb
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDA #0
+.slot                                   ; 55790
+    PHA
+    STA a24022
+    G_PUSH rbc
+.z55795
+    LDA #0 : STA a24025
+    G_PUSH rix
+    JSR z52791                          ; the sound effect's step
+    G_POP rix
+    LDY #12 : LDA (rix),Y
+    BEQ anim
+    SEC : SBC #1 : STA (rix),Y
+    JMP move
+
+    \ the anim: a frame, or a command
+.anim                                   ; 55819
+    LDY #13 : LDA (rix),Y
+    BEQ to_move
+    BPL stepping
+.to_move
+    JMP move
+.stepping
+    G_HL a60580
+    JSR z57395
+    LDY #0 : LDA (rhl),Y : LDY #12 : STA (rix),Y     ; the delay
+    LDY #14 : LDA (rix),Y : CLC : ADC #1 : STA (rix),Y
+    JSR z57408
+    CMP #255 : BNE not255
+    LDY #1 : LDA (rhl),Y : LDY #14 : STA (rix),Y     ; 255 n: go to n
+    JMP anim
+.not255
+    CMP #254 : BNE not254
+    LDY #13 : LDA (rix),Y : ORA #128 : STA (rix),Y   ; 254: stop
+    JMP anim
+.not254
+    CMP #253 : BNE frame
+.z55880                                ; 253 n: removed; back in n passes
+    G_INC16 rl
+    LDY #0 : LDA (rhl),Y : LDY #19 : STA (rix),Y
+    LDA #0
+    LDY #13 : STA (rix),Y
+    LDY #12 : STA (rix),Y
+    LDY #1 : STA (rix),Y
+    LDY #10 : LDA (rix),Y : STA re
+    LDY #11 : LDA (rix),Y : STA rd
+    G_HL a24225
+    LDY #16 : LDA (rix),Y
+    JSR z57415
+    LDX #1 : STX xor_erase
+    JSR z57058
+    LDX #0 : STX xor_erase
+    JMP next
+.frame                                  ; 55916
+    LDY #15 : STA (rix),Y
+    G_HL a59798
+    JSR z57385
+    LDY #0 : LDA (rhl),Y : ASL A : ASL A : STA rc
+    LDA #140 : SEC : SBC rc : SEC : SBC #1
+    LDY #8 : STA (rix),Y
+    LDY #0 : LDA (rhl),Y : LDY #17 : STA (rix),Y     ; width
+    G_INC16 rl
+    LDA #191 : SEC : LDY #0 : SBC (rhl),Y
+    LDY #9 : STA (rix),Y
+    LDY #0 : LDA (rhl),Y : LDY #18 : STA (rix),Y     ; height
+    LDA #1 : STA a24025
+
+    \ the movement: a command running, or the script's next
+.move                                   ; 55957
+    LDY #0 : LDA (rix),Y
+    BEQ script
+    SEC : SBC #1 : STA (rix),Y
+    JMP apply
+.script                                 ; 55970
+    LDY #1 : LDA (rix),Y
+    BNE scripted
+    JMP draw
+.scripted
+    BPL entry
+    JMP apply                           ; (the pumpkin: moved elsewhere)
+.entry
+    G_HL a59393
+    JSR z57395
+    LDY #2 : LDA (rix),Y : STA re
+    LDA #0 : STA rd
+    ASL re : ROL rd : ASL re : ROL rd
+    LDA rl : CLC : ADC re : STA rl
+    LDA rh : ADC rd : STA rh
+    LDY #0 : LDA (rhl),Y
+    CMP #255 : BNE m255
+    LDY #1 : LDA (rhl),Y : LDY #2 : STA (rix),Y      ; 255 n: go to n
+    JMP script
+.m255
+    CMP #254 : BNE m254
+    LDA #0 : LDY #1 : STA (rix),Y                    ; 254: the script ends
+    JMP script
+.m254
+    CMP #253 : BNE m253
+    JMP z55880                                       ; 253 n: removed
+.m253
+    CMP #251 : BNE m251
+    LDY #1 : LDA (rhl),Y : STA rb                    ; 251 a: anim a
+    LDA a24022
+    JSR z55624
+    LDY #2 : LDA (rix),Y : CLC : ADC #1 : STA (rix),Y
+    JMP z55795                                       ; this slot again
+.m251
+    LDY #3 : STA (rix),Y                             ; dir, count, speeds
+    LDY #1 : LDA (rhl),Y : LDY #0 : STA (rix),Y
+    LDY #2 : LDA (rhl),Y : LDY #4 : STA (rix),Y
+    LDY #3 : LDA (rhl),Y : LDY #5 : STA (rix),Y
+    LDA rl : CLC : ADC #3 : STA rl                   ; (HL left on the last)
+    BCC m_nc
+    INC rh
+.m_nc
+    LDY #2 : LDA (rix),Y : CLC : ADC #1 : STA (rix),Y
+
+    \ apply the direction, within the slot's bounds
+.apply                                  ; 56067
+    LDY #3 : LDA (rix),Y
+    ORA a24025 : STA a24025
+    LDA (rix),Y : PHA
+    LDA a24022
+    BEQ wide
+    CMP #1 : BEQ wide
+    LDY #8 : LDA (rix),Y : STA re       ; x 12 to +8, y 33 to +9
+    LDA #12 : STA rd
+    LDY #9 : LDA (rix),Y : STA rc
+    LDA #33 : STA rb
+    JMP bounded
+.wide
+    LDA #248 : STA re : LDA #3 : STA rd ; DE = 1016
+    LDA #211 : STA rc : LDA #8 : STA rb ; BC = 2259
+.bounded
+    PLA
+    CMP #252 : BNE dirs
+    JSR z55745                          ; 252: chase the pumpkin
+.dirs
+    TAX
+    AND #1 : BEQ d0
+    JSR z56137
+.d0
+    TXA : AND #2 : BEQ d1
+    JSR z56160
+.d1
+    TXA : AND #4 : BEQ d2
+    JSR z56178
+.d2
+    TXA : AND #8 : BEQ draw
+    JSR z56196
+
+    \ the redraw: both images built, a frame's wait, old off, new on
+.draw                                   ; 56214
+    LDA a24025 : BNE redraw
+    JMP still
+.redraw
+    LDY #6 : LDA (rix),Y : STA re
+    LDY #7 : LDA (rix),Y : STA rd
+    G_HL a24225
+    LDY #15 : LDA (rix),Y
+    JSR z57415
+    PHA : G_PUSH rde : G_PUSH rbc : G_PUSH rhl
+    LDY #10 : LDA (rix),Y : STA re
+    LDY #11 : LDA (rix),Y : STA rd
+    G_HL a24427
+    LDY #16 : LDA (rix),Y
+    JSR z57415
+    PHA : JSR wait_vsync : PLA          ; EI : HALT
+    LDX #1 : STX xor_erase
+    JSR z57058                          ; the old image off
+    LDX #0 : STX xor_erase
+    G_POP rhl : G_POP rbc : G_POP rde : PLA
+    JSR z57058                          ; the new one on
+    LDY #16 : STA (rix),Y
+    LDA re : LDY #10 : STA (rix),Y
+    LDA rd : LDY #11 : STA (rix),Y
+    G_PUSH rix
+    JSR z56967
+    BEQ apart
+    JSR z56310
+.apart
+    G_POP rix
+.next                                   ; 56286
+    LDA #20 : STA re : LDA #0 : STA rd
+    LDA rixl : CLC : ADC #20 : STA rixl
+    BCC n_nc
+    INC rixh
+.n_nc
+    G_POP rbc
+    PLA : CLC : ADC #1
+    DEC rb : BEQ done
+    JMP slot
+.done
+    RTS
+.still                                  ; 56299: 1024 DEC BC loops
+    LDX #LO(dec_bc_us(1024)) : LDY #HI(dec_bc_us(1024)) : JSR wait_us
+    LDA #0 : STA rc : STA rb
+    JMP next
+}
+
+\ 56137-56196 the moves, each clamped: up to at least B, down to at
+\ most C, left to at least D, right to at most E. A and X kept.
+.z56137
+{
+    PHA
+    LDY #7 : LDA (rix),Y
+    LDY #5 : CMP (rix),Y : BCC low      ; (would go below 0)
+    SBC (rix),Y
+    CMP rb : BCS put
+.low
+    LDA rb
+.put
+    LDY #7 : STA (rix),Y
+    PLA
+    RTS
+}
+.z56160
+{
+    PHA
+    LDY #7 : LDA (rix),Y
+    LDY #5 : CLC : ADC (rix),Y          ; (8-bit, as ADD A,(IX+5))
+    CMP rc : BCC put : BEQ put
+    LDA rc
+.put
+    LDY #7 : STA (rix),Y
+    PLA
+    RTS
+}
+.z56178
+{
+    PHA
+    LDY #6 : LDA (rix),Y
+    LDY #4 : SEC : SBC (rix),Y
+    BCC low
+    CMP rd : BCS put
+.low
+    LDA rd
+.put
+    LDY #6 : STA (rix),Y
+    PLA
+    RTS
+}
+.z56196
+{
+    PHA
+    LDY #6 : LDA (rix),Y
+    LDY #4 : CLC : ADC (rix),Y
+    CMP re : BCC put : BEQ put
+    LDA re
+.put
+    LDY #6 : STA (rix),Y
+    PLA
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ 56310 Collide: CurSlot (24022) touched slot A. Only the pumpkin (0) and
+\ its shot (1) act; nothing while going outside.
+.z56310
+{
+    LDX a24012 : BEQ go
+    RTS
+.go
+    STA a24021
+    JSR z57371                          ; IX = the other
+    LDA a24022
+    BEQ pumpkin
+    CMP #1 : BNE ret
+    JMP shot
+.ret
+    RTS
+.pumpkin                                ; 56338
+    LDA a24090 : AND #127 : BEQ ret     ; the pumpkin empty or exploding
+    CMP #5 : BEQ ret
+    LDY #13 : LDA (rix),Y : AND #127 : BEQ ret
+    G_HL a61065
+    JSR z57408                          ; its type
+    STA rc
+    BPL not_deadly
+    JMP z56571
+.not_deadly
+    AND #64 : BEQ not_item
+    JMP z56490
+.not_item
+    LDA rc : AND #32 : BNE handler
+    LDA rc : AND #16 : BNE ret
+    \ a monster: its score, it explodes, MAGIC -8
+    LDA rc : AND #15
+    G_HL a58817
+    JSR z57395
+    G_EXDEHL
+    JSR z57616
+    LDA a24021
+    LDX #5 : STX rb
+    JSR z55624
+    JSR z55512
+    G_DE a58841
+    JMP z57568
+.handler                                ; 56409
+    LDA rc : AND #15
+    G_HL a61120
+    JSR z57395
+    JMP (rhl)
+    ZA_CANJUMP z56601, z56647, z56656, z56672, z56683, z56747, z56811, z56871, z56901, z56929, z56939
+.shot                                   ; 56419
+    LDY #13 : LDA (rix),Y : AND #127 : BEQ ret2
+    G_HL a61065
+    JSR z57408
+    STA rc
+    BMI gone
+    AND #64 : BNE ret2
+    LDA rc : AND #32 : BNE shot_handler
+    LDA rc : AND #16 : BNE ret2
+.z56448                                ; it explodes, the shot is gone
+    LDA a24021
+    LDX #5 : STX rb
+    JSR z55624
+    JSR z55512
+    LDA rc : AND #15
+    G_HL a58817
+    JSR z57395
+    G_EXDEHL
+    JSR z57616
+.gone                                   ; 56484
+    LDA #1
+    JMP z55551
+.shot_handler                           ; 56475: handler 0 dies as 100 points
+    LDA rc : AND #15 : BNE ret2
+    LDA #2 : STA rc
+    JMP z56448
+.ret2
+    RTS
+}
+
+\ 56490 an item: into the inventory (bits 3-5), removed, +1000, a sound.
+.z56490
+    LDA rc : LSR A : LSR A : LSR A : AND #7
+    JSR z56521
+    LDA a24021
+    JSR z55551
+    G_DE a58870
+    JSR z57616
+    G_HL a64014
+    JMP z52781
+
+\ 56521 GiveItem: inventory slot A gets its ingredient (61514), whose
+\ first frame is drawn on the panel (61506: y, then x per slot).
+.z56521
+    PHA : PHA
+    G_HL a24070
+    JSR z57408                          ; HL = the inventory slot
+    PLA
+    G_PUSH rhl
+    G_HL a61514
+    JSR z57408
+    G_POP rhl
+    LDY #0 : STA (rhl),Y
+    PLA
+    G_PUSH rhl
+    LDX a61506 : STX rd
+    G_HL a61506+1
+    JSR z57408
+    STA re
+    G_POP rhl
+    LDY #0 : LDA (rhl),Y                ; the ingredient's anim
+    G_HL a60580
+    JSR z57395
+    G_INC16 rl
+    LDY #0 : LDA (rhl),Y                ; its first frame
+    G_HL a24225
+    JSR z57415
+    JMP z57194
+
+\ 56571 KillPumpkin: it explodes; dying for 70 passes, the heads cackle.
+.z56571
+    LDA #5 : STA rb
+    LDA #0
+    JSR z55624
+    JSR z55512
+    LDA #70 : STA a24034
+    LDA #20 : STA a24013
+    LDA #143 : STA a24032
+    LDA #0 : STA a24014
+    RTS
+
+\ --- The handlers (61120), reached from 56409 with IX = the other -------
+
+\ 0 (anim 11): explodes, +100, MAGIC -8; reverses left and right for 50
+\ passes unless the goblet (29) is held.
+.z56601
+{
+    LDA a24021
+    LDX #5 : STX rb
+    JSR z55624
+    JSR z55512
+    LDA #2
+    G_HL a58817
+    JSR z57395
+    G_EXDEHL
+    JSR z57616
+    G_DE a58841
+    JSR z57568
+    LDA #29 : JSR z56729
+    BEQ done
+    LDA #50 : STA a24015
+    LDA #12 : STA a24016
+.done
+    RTS
+}
+
+\ 1 (anims 8, 31): deadly without the shield (13).
+.z56647
+{
+    LDA #13 : JSR z56729
+    BEQ done
+    JMP z56571
+.done
+    RTS
+}
+
+\ 4 (37, the door): with the key (28) it opens (anim 30), the room done.
+.z56656
+{
+    LDA #28 : JSR z56729
+    BEQ open
+    RTS
+.open
+    LDA a24021
+    LDX #30 : STX rb
+    JSR z55624
+    JMP z56694
+}
+
+\ 2 (35): becomes anim 24, the room done.
+.z56672
+    LDA a24021
+    LDX #24 : STX rb
+    JSR z55624
+    JMP z56694
+
+\ 3 (39): becomes anim 16, the room done.
+.z56683
+    LDA a24021
+    LDX #16 : STX rb
+    JSR z55624
+\ the room's bit in 24054 set
+.z56694
+    JSR z56700
+    ORA rc
+    LDY #0 : STA (rhl),Y
+    RTS
+
+\ 5 (32, a refill): taken for this game (61521 bit 7), firing allowed
+\ (24017), removed, MAGIC 99, +100.
+.z56747
+{
+    LDA a24030
+    LDX #0
+.find
+    CMP a61521,X : BEQ found
+    INX : CPX #52 : BNE find
+    RTS
+.found
+    LDA a61521,X : ORA #128 : STA a61521,X
+    STA a24017
+    LDA a24021
+    JSR z55551
+    LDA #'9' : STA a58813 : STA a58814
+    G_DE a58835
+    JSR z57568                          ; (minus 0: prints it)
+    G_DE a58850
+    JMP z57616
+}
+
+\ 6 (26, the cauldron): with all seven, +100, the win tune and text, wait
+\ for fire, restart. Without, death.
+.z56811
+{
+    JSR z56794
+    BEQ won
+    JMP z56571
+.won
+    G_DE a58850
+    JSR z57616
+    LDA #1 : STA hook_off               ; DI
+    JSR z51400
+    LDA #3 : STA a24002
+    LDA #0 : STA hook_off               ; EI
+    JSR z53087
+    G_HL a58666
+    LDA #6 : STA rc : STA rb            ; BC = 1542
+    JSR z54363
+    G_HL a58803
+    LDA #16 : STA rc : LDA #12 : STA rb ; BC = 3088
+    JSR z54363
+.released
+    JSR z52767 : AND #16 : BNE released
+.pressed
+    JSR z52767 : AND #16 : BEQ pressed
+    JMP z52235
+}
+
+\ 7 (44): with the scissors (34) and not yet the moon (7), the moon,
+\ +1000, a sound. It stays.
+.z56871
+{
+    LDA #34 : JSR z56729
+    BNE done
+    LDA #7 : JSR z56729
+    BEQ done
+    LDA #3
+    JSR z56521
+    G_DE a58870
+    JSR z57616
+    G_HL a64014
+    JMP z52781
+.done
+    RTS
+}
+
+\ 8 (27, the crown): into the inventory, removed, room 10's guardian
+\ stops chasing (59582: script 8's direction), +1000, a sound.
+.z56901
+    LDA #2
+    JSR z56521
+    LDA a24021
+    JSR z55551
+    LDA #0 : STA a59582
+    G_DE a58870
+    JSR z57616
+    G_HL a64014
+    JMP z52781
+
+\ 9 (24, 36, 41) and 10 (16, 40, 42): once its anim has stopped, push
+\ the pumpkin right (24031 bit 3) or left (bit 2).
+.z56929
+{
+    JSR z56949
+    BNE done
+    LDA a24031 : ORA #8 : STA a24031
+.done
+    RTS
+}
+.z56939
+{
+    JSR z56949
+    BNE done
+    LDA a24031 : ORA #4 : STA a24031
+.done
+    RTS
+}
+
+\ 56949: Z if the other's anim (24021) is empty or stopped.
+.z56949
+{
+    LDA a24021
+    JSR z57371
+    LDY #13 : LDA (rix),Y
+    BMI stopped
+    BEQ stopped
+    RTS
+.stopped
+    LDA #0
+    RTS
+}
+
+\ 56967 Overlap: NZ and A = the first of slots 2-5 (not CurSlot) that
+\ slot IX overlaps: |dx| < 4 x the width of the one further left, |dy| <
+\ the height of the one higher up. Else Z.
+.z56967
+{
+    LDA a24022 : STA rc
+    LDA #2 : STA rb
+    LDA #LO(a24117) : STA riyl : LDA #HI(a24117) : STA riyh
+.slot
+    LDY #13 : LDA (riy),Y
+    BEQ next
+    LDA rc : CMP rb
+    BEQ next
+    LDY #6 : LDA (rix),Y : SEC : SBC (riy),Y
+    BCS x_right                         ; IX is the right one: IY's width
+    EOR #&FF : ADC #1                   ; (C clear) |dx|
+    PHA : LDY #17 : LDA (rix),Y
+    JMP x_width
+.x_right
+    PHA : LDY #17 : LDA (riy),Y
+.x_width
+    ASL A : ASL A : STA rd
+    PLA
+    CMP rd : BCS next
+    LDY #7 : LDA (rix),Y : SEC : SBC (riy),Y
+    BCS y_below
+    EOR #&FF : ADC #1
+    LDY #18 : CMP (rix),Y
+    JMP y_test
+.y_below
+    LDY #18 : CMP (riy),Y
+.y_test
+    BCS next
+    LDA rb                              ; (NZ: 2 to 5)
+    RTS
+.next
+    LDA #20 : STA re : LDA #0 : STA rd
+    LDA riyl : CLC : ADC #20 : STA riyl
+    BCC nc
+    INC riyh
+.nc
+    INC rb
+    LDA rb : CMP #6 : BNE slot
+    LDA #0
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ PLACEHOLDERS, for the lead to delete on merge: the names this layer uses
+\ that the drawing and data layers define. Each is a guess at nothing
+\ but a name, so a duplicate on merge is loud.
+r_tables = &8000                        ; tools/mkdata.py's GAMEDATA tables (57726-64998)
+xor_erase = ZP_END                      ; non-zero while a XOR erases the old image
+.page_game                              ; GAMEDATA into &8000 (room.6502's)
+    RTS

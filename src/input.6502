@@ -1,3 +1,207 @@
 \ ***************************************************************************
-\ Input: the controls byte (52767) from the BBC's keys.
+\ Input: the controls byte (52767) from the BBC's keys or an analogue
+\ joystick (decision 6).
+\
+\ The controls byte, as the original's readers make it (52658's
+\ KEMPSTON_MAP at 57744 and 52695's key table at 57760 agree, and the
+\ player's code reads it so: MOVE_UP on direction bit 0, the bolt's
+\ script takes the low nibble as a direction):
+\
+\   bit 0 (1) up      bit 1 (2) down    bit 2 (4) left    bit 3 (8) right
+\   bit 4 (16) fire / bounce            bit 6 (64) abort the game
+\
+\ Up with down, and left with right, cancel each other in both readers.
+\
+\ The original reads through the vector at 57726 (52658 Kempston or 52695
+\ keys; the menu writes it). So does the port: a57726 holds z52695 or
+\ z52658, the BBC readers below.
 \ ***************************************************************************
+
+\ The controls' bits.
+CTL_UP    = 1
+CTL_DOWN  = 2
+CTL_LEFT  = 4
+CTL_RIGHT = 8
+CTL_FIRE  = 16
+CTL_ABORT = 64
+
+\ The keys, as internal key numbers (the OS's INKEY -n is n - 1), in the
+\ original's order (UP, DOWN, LEFT, RIGHT, FIRE/BOUNCE, ABORT GAME, the
+\ entries of 57760). The front end's redefine screen (menu 3, 52538)
+\ writes new ones into keys; its "Interface II" choice (menu 2, 52520),
+\ which copies 57760 to 57784 in the original, calls reset_keys here.
+\ The original's 57760 and 57784 are unused on the BBC.
+KEY_ESCAPE = &70
+DEFAULT_KEYS = {&48, &68, &61, &42, &49, KEY_ESCAPE}   ; : / Z X RETURN ESCAPE
+KEYS = LEN(DEFAULT_KEYS)
+.keys_default
+    EQUB DEFAULT_KEYS
+.keys
+    EQUB DEFAULT_KEYS
+\ Each entry's bit in the controls (57760's fourth bytes: 1, 2, 4, 8, 16, 64).
+.key_bits
+    EQUB CTL_UP, CTL_DOWN, CTL_LEFT, CTL_RIGHT, CTL_FIRE, CTL_ABORT
+    ASSERT P% - key_bits = KEYS
+
+\ keys = keys_default (the original's 52218 and 52520 copy 57760 to 57784).
+.reset_keys
+{
+    LDX #KEYS - 1
+.each
+    LDA keys_default,X : STA keys,X
+    DEX : BPL each
+    RTS
+}
+
+\ 52767 READ_CONTROLS: A = the controls, through the reader at 57726. The
+\ original pushes 52775 (CHECK_ABORT) as the reader's return address and
+\ jumps through 57726, so every read, from any caller, restarts the game
+\ when the abort bit is set. Here the reader is called and 52775 follows:
+\ the same order and the same effect. X and Y are changed.
+.z52767
+    JSR read_through_57726
+\ 52775 CHECK_ABORT: the abort bit set restarts the game at 52235, which
+\ resets the stack as the original's LD SP,0 does, so nothing returns
+\ here. Else A is returned unchanged and Z set, as the original's BIT 6,A
+\ leaves them.
+.z52775
+{
+    BIT abort_bit : BNE abort
+    RTS
+.abort
+    JMP z52235
+}
+.abort_bit
+    EQUB CTL_ABORT
+
+.read_through_57726
+    JMP (a57726)
+    ZA_CANJUMP z52695, z52658
+    ASSERT LO(a57726) <> &FF        ; (the 6502's JMP (&xxFF) reads &xx00)
+
+\ 52695 READ_KEYS: the controls from the keyboard, read from the System
+\ VIA (key_down). Each of the six keys held ORs in its bit; then left
+\ with right cancel, and up with down. Returns A; X and Y are changed,
+\ the register zero page is not (the original keeps IX, DE and BC).
+.z52695
+{
+    LDA #0 : STA ctl_acc
+    LDY #KEYS - 1
+.each
+    LDX keys,Y : JSR key_down : BEQ next
+    LDA ctl_acc : ORA key_bits,Y : STA ctl_acc
+.next
+    DEY : BPL each
+    \ (52739) left and right together cancel
+    LDA ctl_acc : AND #(CTL_LEFT OR CTL_RIGHT) : CMP #(CTL_LEFT OR CTL_RIGHT) : BNE up_down
+    LDA ctl_acc : AND #(&FF EOR (CTL_LEFT OR CTL_RIGHT)) : STA ctl_acc
+.up_down
+    \ (52750) up and down together cancel
+    LDA ctl_acc : AND #(CTL_UP OR CTL_DOWN) : CMP #(CTL_UP OR CTL_DOWN) : BNE done
+    LDA ctl_acc : AND #(&FF EOR (CTL_UP OR CTL_DOWN)) : STA ctl_acc
+.done
+    LDA ctl_acc
+    RTS
+}
+.ctl_acc
+    EQUB 0
+
+\ ---------------------------------------------------------------------------
+\ The joystick: the BBC's analogue port in place of the Kempston.
+\
+\ The original's 52658 reads Kempston's R=1 L=2 D=4 U=8 nibble, maps it
+\ through KEMPSTON_MAP (57744, which also cancels opposites) and keeps
+\ fire (16). Here the nibble comes from the ADC (uPD7002): channel 0 is
+\ joystick 1's X (high is left), channel 1 its Y (high is up); fire is
+\ the System VIA's PB4, low when pressed. The ADC converts one channel at
+\ a time, so each read takes the channel that finished and starts the
+\ other. The game's interrupt doesn't service the ADC's end of
+\ conversion, so it's polled.
+\
+\ The ADC is at &FEC0 on the Model B and &FE18 on the Master: joy_init
+\ chooses, and must run while the OS is still in charge (it asks OSBYTE
+\ 0). Without it the Model B's addresses stand. The original's abort in
+\ this reader is the A key alone in its half-row; here it's the key
+\ table's abort key, held.
+\ ---------------------------------------------------------------------------
+
+ADC_B      = &FEC0                  ; status (read) / start (write)
+ADC_MASTER = &FE18
+ADC_HIGH   = 1                      ; the result's high byte, after the status
+sysvia_irb = &FE40                  ; port B (read): PB4 is joystick 1's fire, low when pressed
+JOY_FIRE   = &10
+JOY_LOW    = &40                    ; an axis below this is right / down
+JOY_HIGH   = &C0                    ; ... at or above this left / up
+
+\ The ADC's addresses for this machine: call while the OS is in charge.
+\ OSBYTE 0's X: 3 and 4 are the Master 128 and ET; the B (0, 1) and B+
+\ (2) have it at &FEC0, and the Compact (5) has none.
+.joy_init
+{
+    LDA #0 : LDX #1 : JSR osbyte
+    CPX #3 : BCC done
+    CPX #5 : BCS done
+    LDA #LO(ADC_MASTER) : LDX #HI(ADC_MASTER)
+    STA joy_kick+1 : STX joy_kick+2
+    STA joy_status+1 : STX joy_status+2
+    STA joy_start+1 : STX joy_start+2
+    LDA #LO(ADC_MASTER + ADC_HIGH)
+    STA joy_high+1 : STX joy_high+2
+.done
+    RTS
+}
+
+\ 52658 READ_KEMPSTON: the controls from the joystick. Returns A; X and Y
+\ are changed, the register zero page is not (the original keeps BC and
+\ DE). (joy_init writes the ADC's addresses into the operands here, so
+\ these labels are global.)
+.z52658
+    LDA joy_started : BNE joy_status
+    INC joy_started
+    LDA #0                          ; 8-bit conversion of channel 0
+.joy_kick
+    STA ADC_B
+    JMP joy_axes
+.joy_status
+    LDA ADC_B
+    BMI joy_axes                    ; (bit 7 set: still converting)
+    AND #3 : TAX                    ; the channel converted (0 or 1)
+.joy_high
+    LDA ADC_B + ADC_HIGH : STA joy_axis,X
+    TXA : EOR #1                    ; the other channel
+.joy_start
+    STA ADC_B
+.joy_axes
+{
+    \ the Kempston nibble: R=1 L=2 D=4 U=8
+    LDX #0
+    LDA joy_axis : CMP #JOY_LOW : BCS not_right
+    LDX #1
+.not_right
+    CMP #JOY_HIGH : BCC not_left
+    LDX #2
+.not_left
+    STX ctl_acc
+    LDX #0
+    LDA joy_axis+1 : CMP #JOY_LOW : BCS not_down
+    LDX #4
+.not_down
+    CMP #JOY_HIGH : BCC not_up
+    LDX #8
+.not_up
+    TXA : ORA ctl_acc : TAX
+    LDA a57744,X : STA ctl_acc      ; KEMPSTON_MAP
+    \ fire, as Kempston's bit 4
+    LDA sysvia_irb : AND #JOY_FIRE : EOR #JOY_FIRE : ORA ctl_acc : STA ctl_acc
+    \ abort: the key table's abort key
+    LDX keys + KEYS - 1 : JSR key_down : BEQ done
+    LDA ctl_acc : ORA #CTL_ABORT : STA ctl_acc
+.done
+    LDA ctl_acc
+    RTS
+}
+    ASSERT JOY_FIRE = CTL_FIRE      ; (fire goes straight in, as Kempston's)
+.joy_started
+    EQUB 0
+.joy_axis
+    EQUB &80, &80                   ; channels 0 (X) and 1 (Y), centred

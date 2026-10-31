@@ -66,7 +66,11 @@ if bit 6 is set, else returns. Result in A:
 | 6 | 64 | abort game |
 
 The direction bits are the same encoding as an object's direction
-byte (IX+3), which is why the code can copy them across.
+byte (IX+3), which is why the code can copy them across. (Checked
+against the code: KEMPSTON_MAP 57744 is `0,8,4,0,2,10,6,0,1,9,5,0,...`,
+so the port's R=1 L=2 D=4 U=8 become 8, 4, 2, 1; core.md's "bit 0
+right, 1 left, 2 down, 3 up" is the Kempston port's order, not the
+controls byte's.)
 
 - **Kempston** (`READ_KEMPSTON`, 52658; selected by menu 1): `IN A,(31)`,
   the low nibble (R=1, L=2, D=4, U=8) looked up in `KEMPSTON_MAP`
@@ -319,7 +323,8 @@ A, B, DE, HL; the callers push BC, DE, HL around it.
    set: 24014 = its attribute; if the attribute is solid, return NZ.
 4. 24031 = 0. If X >= 12: **left foot** X+1, X+2 solid -> 24031 |= 8.
    **Right foot** X+6 solid -> 24031 |= 4. (X+0 and X+7 are never
-   tested.)
+   tested.) X < 12 skips both feet, not just the left (55019 jumps to
+   55082).
 5. 24031 = 0 -> return Z. 24031 = 12 (both feet, no centre) -> clear it,
    return Z: the pumpkin passes between them. 24031 = 4 or 8 -> return
    NZ: a hit "on the edge", which at landing makes the next bounce

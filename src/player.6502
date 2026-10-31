@@ -1,3 +1,426 @@
 \ ***************************************************************************
-\ The player: the bounce, movement, collision with the scenery, firing (53149-53408, 54513-55285).
+\ The player: the reversed-controls timer, firing, the squash pass (53149,
+\ 53163, 53221) and the physics: flips, moving up and down, and collision
+\ with the scenery (54513-55284). docs/research/player.md.
+\
+\ The player is object 0 (IX = 24077 throughout: 54530 and 53163 set it),
+\ so (IX+n) is written a24077+n. Its fields: +3 direction (1 up, 2 down,
+\ 4 left, 8 right), +4 dx, +5 dy, +6 X, +7 Y, +13 animation state, +18
+\ height.
+\
+\ Collision reads the Spectrum's screen (sprites included) with zx_read
+\ on the original's screen addresses, doing the original's arithmetic on
+\ HL, and the attributes through 57326 and 57355.
+\
+\ Routines called here, and what this code needs of them (the original's
+\ contracts):
+\   57307  A = pixel line -> HL (rl, rh) = its screen address; A kept
+\   57326  HL = screen byte -> A = its attribute, DE its address
+\   57355  A = attribute -> Z set if solid; A, BC, HL kept
+\   55624  A = slot, B = state; keeps every Z80 register
+\   55363  A = slot, E = X, D = Y, C = script, B = state
+\   57568  DE = the magic's decrement (a58880)
+\   52781  HL = the sound effect (a64010); keeps BC and DE
+\   56571  kills the player (a tail jump)
 \ ***************************************************************************
+
+\ 53149 TICK_REVERSE: count rev_timer (24015) down; at 0 clear rev_mask
+\ (24016).
+.z53149
+{
+    LDA a24015 : BEQ done
+    SEC : SBC #1 : STA a24015
+    BNE done
+    STA a24016                      ; (A = 0)
+.done
+    RTS
+}
+
+\ 53163 FIRE: a bolt in the direction held, unless the warp runs, it's
+\ the landing pass, firing isn't enabled (24017), no direction is held,
+\ or object 1 (the bolt) is busy. Costs 1 magic.
+.z53163
+{
+    LDA a24012 : BNE done
+    LDA a24028 : AND #1 : BNE done
+    LDA a24017 : BEQ done
+    LDA a24020 : AND #15 : BEQ done
+    STA a59450                      ; the bolt script's direction (self-modified)
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDA a24077+21 : BEQ fire        ; object 1's script: 0 or negative is free
+    BPL done
+.fire
+    LDA a24077+6 : STA re           ; spawn object 1 at the player
+    LDA a24077+7 : STA rd
+    LDA #2 : STA rc                 ; script 2
+    LDA #32 : STA rb                ; state 32
+    LDA #1 : JSR z55363
+    LDA #LO(a58880) : STA re : LDA #HI(a58880) : STA rd
+    JMP z57568                      ; magic - 1
+.done
+    RTS
+}
+
+\ 53221 LANDED: the squash pass. Fire held raises the level (to 2 at
+\ most) and sets bit 7; else bit 7 is cleared, or if it was clear the
+\ level drops (to 0 at least). v = LAUNCH_V[level]; the direction for
+\ after the squash goes into 24029; the direction stops.
+.z53221
+{
+    LDA a24020 : PHA                ; (PUSH AF: the controls)
+    AND #16 : BNE fire
+    LDA a24027 : BPL no_bit7
+    AND #127
+    JMP store
+.no_bit7
+    BEQ launch                      ; (A = 0: level 0 stays)
+    SEC : SBC #1
+.store                              ; (53244)
+    STA a24027
+.launch                             ; (53247)
+    AND #127 : TAX
+    LDA a61155,X : STA a24026       ; LAUNCH_V
+    \ land_dir = (dir AND 3) OR edge OR ((rev_mask XOR controls) AND 12)
+    PLA : STA rc
+    LDA a24016 : EOR rc : AND #12 : STA rc
+    LDA a24031 : ORA rc : STA rc
+    LDA a24077+3 : AND #3 : ORA rc : STA a24029
+    LDA #0 : STA a24077+3 : STA a24031
+    LDA #LO(a64010) : STA rl : LDA #HI(a64010) : STA rh
+    JMP z52781                      ; the bounce sound
+.fire                               ; (53295)
+    LDA a24027 : AND #127
+    CMP #2 : BCS max
+    ADC #1                          ; (C clear)
+.max
+    ORA #128
+    JMP store
+}
+
+\ 54513: the animation ended (A = the state, bit 7 set). The explosion's
+\ end (133) does nothing; else state land_state (24009) and direction
+\ land_dir (24029), then on into 54530.
+.z54513
+    CMP #133 : BEQ z54530_done
+    LDA a24009 : STA rb
+    LDA #0 : JSR z55624
+    LDA a24029 : STA a24077+3
+\ 54530 PLAYER, from the main loop: idle while the warp runs, dead or
+\ exploded; the squash pass (53221); else the flips 24028 asks for, then
+\ move up, down, or neither, each testing for walls after.
+.z54530
+    LDA a24012 : BNE z54530_done
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDA a24077+13 : BMI z54513
+    CMP #5 : BEQ z54530_done
+    CMP #4 : BNE z54557
+    JMP z53221
+.z54530_done
+    RTS
+\ (54557) 24028 bit 0 (landed) or 1 (ceiling, peak): swap up and down;
+\ bit 2 (wall): swap left and right.
+.z54557
+{
+    LDA a24028 : AND #3 : BEQ walls
+    LDA a24077+3 : EOR #3 : STA a24077+3
+    LDA a24028 : AND #252 : STA a24028
+.walls                              ; (54568: bit 2, which the AND kept)
+    LDA a24028 : AND #4 : BEQ move
+    LDA a24077+3 : EOR #12 : STA a24077+3
+    LDA a24028 : AND #&FB : STA a24028
+.move                               ; (54612)
+    LDA a24077+3 : LSR A : BCC not_up
+    JMP z55131
+.not_up
+    LSR A : BCS z54631
+    LDA a24077+7
+    JMP z54807
+}
+
+\ 54631 MOVE_DOWN: test up to STEP_ROWS[v] rows below the sprite. No hit:
+\ dy = the rows, v + 1 (9 at most). A hit on the k-th row: death on
+\ attribute 1 (24014, possibly stale), else dy = k - 1, the squash, and
+\ a flip next pass. Then the level from v, and the walls at Y + dy + 7.
+.z54631
+{
+    LDA a24077+7 : CLC : ADC a24077+18 : STA rc   ; C = the first row below
+    JSR z57307
+    LDX a24026 : LDA a61145,X : STA rb            ; STEP_ROWS
+    LDA #0 : STA re
+.row                                ; (54655)
+    INC re : INC rc
+    JSR save_regs                   ; (PUSH DE, BC, HL)
+    JSR z54970
+    JSR restore_regs                ; (POP HL, BC, DE: the flags kept)
+    BNE z54746
+    \ the next pixel line down
+    INC rh : LDA rh : AND #7 : BNE next
+    LDA rl : CLC : ADC #32 : STA rl : BCS next
+    LDA rh : SEC : SBC #8 : STA rh
+.next
+    DEC rb : BNE row
+    \ no hit: v + 1, 9 at most
+    LDA a24026 : CLC : ADC #1
+    CMP #10 : BCS z54699
+    STA a24026
+}
+\ (54699) dy = the rows; going down; the level: 0 if v <= 4, 1 if v <= 6,
+\ else 2 (LAUNCH_V's thresholds).
+.z54699
+{
+    LDA re : STA a24077+5
+    LDA a24077+3 : AND #12 : ORA #2 : STA a24077+3
+    LDX #0
+.level
+    LDA a24026 : CMP a61155,X : BCC done : BEQ done
+    CPX #2 : BCS done
+    INX : JMP level
+.done
+    STX rb
+    LDA a24027 : AND #128 : ORA rb : STA a24027
+    \ (54789) the walls from the moved sprite's middle
+    LDA a24077+7 : CLC : ADC a24077+5
+    CLC : ADC #7
+    JMP z54807
+}
+\ (54746) LANDING: on attribute 1, death.
+.z54746
+{
+    LDA a24014 : CMP #1 : BNE alive
+    JMP z56571
+.alive
+    LDA a24028 : ORA #1 : STA a24028  ; flip vertical next pass
+    DEC re                          ; dy = rows - 1
+    LDA #4 : STA rb
+    LDA #0 : JSR z55624             ; the squash
+    LDA a24031 : LSR A : LSR A
+    CLC : ADC #1 : STA a24009       ; land_state = (edge >> 2) + 1
+    LDA #LO(a64010) : STA rl : LDA #HI(a64010) : STA rh
+    JSR z52781                      ; the bounce sound
+    JMP z54699
+}
+
+\ 54799 TEST_WALLS, going up: from row Y - dy + 7.
+.z54799
+    LDA a24077+7 : SEC : SBC a24077+5
+    CLC : ADC #7
+\ 54807: from row A. Moving right, the column X + dx + 8; left, X - dx - 1;
+\ five rows. A lit pixel with a solid attribute is a wall: flip next
+\ pass, state 3 (right) or 2 (left), the bounce sound. (C is set to A
+\ before the direction is tested, where the original sets it after; no
+\ caller reads it.)
+.z54807
+{
+    STA rc
+    JSR z57307
+    LDX rl : STX a24040 : LDX rh : STX a24040+1
+    LDA a24077+3 : STA rd
+    AND #8 : BNE right
+    LDA rd : AND #4 : BNE left
+    RTS
+.right
+    LDA a24077+6 : CLC : ADC a24077+4
+    CLC : ADC #8
+    LDX #5 : STX rb
+    JSR z54906 : BEQ done
+    JSR z57326 : JSR z57355 : BNE done
+    LDX #3
+    JMP wall
+.left
+    LDA a24077+6 : SEC : SBC a24077+4
+    SEC : SBC #1
+    LDX #5 : STX rb
+    JSR z54906 : BEQ done
+    JSR z57326 : JSR z57355 : BNE done
+    LDX #2
+.wall
+    LDA a24028 : ORA #4 : STA a24028
+    STX rb
+    LDA #0 : JSR z55624
+    LDA #LO(a64010) : STA rl : LDA #HI(a64010) : STA rh
+    JMP z52781                      ; the bounce sound
+.done
+    RTS
+}
+
+\ 54906 TEST_COLUMN: X unit A on B rows from row C (its address at
+\ 24040), stopping outside rows 33-190. Z clear (NZ) if a pixel is lit,
+\ with HL its screen byte. Units off the screen (X - 12 not 0-127) are
+\ never lit. E = the unit's mask.
+.z54906
+{
+    SEC : SBC #12 : BCC none        ; (Z80 C: X < 12)
+    CMP #128 : BCS none
+    PHA
+    LSR A : LSR A
+    CLC : ADC a24040 : STA rl
+    LDA a24040+1 : ADC #0 : STA rh
+    PLA : AND #3 : TAX
+    LDA a61158,X : STA re           ; PIXEL_MASKS
+.row                                ; (54937)
+    LDA rc : CMP #191 : BCS none
+    CMP #33 : BCC none
+    JSR zx_read : AND re : BNE done
+    INC rc
+    \ the next pixel line down
+    INC rh : LDA rh : AND #7 : BNE next
+    LDA rl : CLC : ADC #32 : STA rl : BCS next
+    LDA rh : SEC : SBC #8 : STA rh
+.next
+    DEC rb : BNE row
+.none                               ; (54968)
+    LDA #0
+.done
+    RTS
+}
+
+\ 54970 TEST_ROW: the row at HL under (or over) the sprite. C is that
+\ row + 1 going down, - 1 going up, and only C in 33-190 is tested.
+\ Z clear (NZ) if blocked:
+\ - a lit centre unit (X+3 to X+5): its attribute goes into 24014 (hit_attr),
+\   solid or not; solid blocks;
+\ - else the feet (X >= 12 only): the left (X+1, X+2) solid sets edge
+\   (24031) bit 3, the right (X+6) bit 2. One foot blocks; both don't
+\   (edge cleared), and the pumpkin passes between.
+\ B, C, DE and HL are changed (the callers keep them).
+.z54970
+{
+    LDA rc : CMP #191 : BCS clear
+    CMP #33 : BCS test
+.clear
+    LDA #0
+    RTS
+.test                               ; (54981)
+    LDA rl : STA a24040 : LDA rh : STA a24040+1
+    LDA a24077+6 : CLC : ADC #3
+    LDX #3 : STX rb
+    JSR z55095 : BEQ feet
+    JSR z57326 : JSR z57355
+    STA a24014                      ; (STA keeps 57355's Z)
+    BNE feet
+    ORA #1                          ; NZ: blocked
+    RTS
+.feet                               ; (55010)
+    LDA #0 : STA a24031
+    LDA a24077+6 : CMP #12 : BCC edge   ; (SUB 12, JR C)
+    LDA a24077+6 : CLC : ADC #1
+    LDX #2 : STX rb
+    JSR z55095 : BEQ right_foot
+    JSR z57326 : JSR z57355 : BNE right_foot
+    LDA a24031 : ORA #8 : STA a24031
+.right_foot                         ; (55051)
+    LDA a24077+6 : CLC : ADC #6
+    LDX #1 : STX rb
+    JSR z55095 : BEQ edge
+    JSR z57326 : JSR z57355 : BNE edge
+    LDA a24031 : ORA #4 : STA a24031
+.edge                               ; (55082)
+    LDA a24031 : BEQ done           ; Z: neither foot
+    CMP #12 : BNE done              ; NZ: one foot
+    LDA #0 : STA a24031             ; Z: both
+.done
+    RTS
+}
+
+\ 55095 TEST_UNITS: B X units from unit A, on the row at 24040. Z clear
+\ (NZ) if one is lit, with HL its screen byte. Units off the screen (X - 12
+\ not 0-127) are skipped. (The original returns the unit - 12 in A and C;
+\ its callers don't read them.)
+.z55095
+{
+    SEC : SBC #12
+.unit                               ; (55097)
+    STA rc
+    CMP #128 : BCS next
+    LSR A : LSR A
+    CLC : ADC a24040 : STA rl
+    LDA a24040+1 : ADC #0 : STA rh
+    LDA rc : AND #3 : TAX
+    LDA a61158,X : STA re           ; PIXEL_MASKS
+    JSR zx_read : AND re : BNE done
+.next                               ; (55126)
+    LDA rc : CLC : ADC #1
+    DEC rb : BNE unit
+    LDA #0
+.done
+    RTS
+}
+
+\ 55131 MOVE_UP: test up to STEP_ROWS[v] rows above the sprite. A hit on
+\ the k-th row: dy = k (the top overlaps the ceiling by one) and a flip;
+\ v is kept. No hit: dy = the rows, edge cleared, v - 1; at 0 a flip
+\ (the peak), else the level from v. Then the walls at Y - dy + 7.
+.z55131
+{
+    LDA a24077+7 : SEC : SBC #1 : STA rc  ; C = the first row above
+    JSR z57307
+    LDX a24026 : LDA a61145,X : STA rb    ; STEP_ROWS
+    LDA #0 : STA re
+.row                                ; (55153)
+    INC re : DEC rc
+    JSR save_regs
+    JSR z54970
+    JSR restore_regs
+    BNE z55261
+    \ the next pixel line up
+    DEC rh : LDA rh : AND #7 : CMP #7 : BNE next
+    LDA rl : SEC : SBC #32 : STA rl : BCC next   ; (Z80 C: a borrow)
+    LDA rh : CLC : ADC #8 : STA rh
+.next
+    DEC rb : BNE row
+    \ no hit
+    LDA re : STA a24077+5
+    LDA #0 : STA a24031
+    LDA a24077+3 : AND #12 : ORA #1 : STA a24077+3
+    LDA a24026 : BEQ peak
+    SEC : SBC #1 : STA a24026
+    STA rc                          ; (55215; STA keeps the flags)
+    BNE level
+    JMP peak_flip
+.peak
+    STA rc
+.peak_flip
+    LDA a24028 : ORA #2 : STA a24028
+    JMP z54799
+.level                              ; (55230) 2 if v >= 9, 1 if v >= 6, else 0
+    LDX #2
+.thresh
+    LDA a24026 : CMP a61155,X : BCS done
+    CPX #0 : BEQ done
+    DEX : JMP thresh
+.done
+    STX rb
+    LDA a24027 : AND #128 : ORA rb : STA a24027
+    JMP z54799
+}
+\ (55261) HIT_CEILING: dy = the rows, a flip; going up.
+.z55261
+    LDA a24028 : ORA #2 : STA a24028
+    LDA re : STA a24077+5
+    LDA a24077+3 : AND #12 : ORA #1 : STA a24077+3
+    JMP z54799
+
+\ The row loops keep BC, DE and HL around TEST_ROW (54970), as the
+\ original's PUSH DE, BC, HL and POPs do; restore_regs keeps the flags
+\ TEST_ROW returns.
+.save_regs
+{
+    LDX #5
+.each
+    LDA rc,X : STA saved_regs,X
+    DEX : BPL each
+    RTS
+}
+.restore_regs
+{
+    PHP
+    LDX #5
+.each
+    LDA saved_regs,X : STA rc,X
+    DEX : BPL each
+    PLP
+    RTS
+}
+    ASSERT rh = rc + 5 AND rb = rc + 1 AND re = rc + 2 AND rd = rc + 3 AND rl = rc + 4
+.saved_regs
+    EQUB 0, 0, 0, 0, 0, 0

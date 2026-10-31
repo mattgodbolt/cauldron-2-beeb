@@ -13,6 +13,9 @@
 #   make disasm   the original's disassembly with the research's labels,
 #                 build/c2.skool (from disasm/*.ctl)
 #   make venv     the Python tools' environment (.venv: SkoolKit, Pillow, py65)
+#   make passes   every scenario in tests/scenarios.txt on both machines,
+#                 compared pass by pass (tools/zxpass.py, tools/beepass.mjs,
+#                 tools/passcmp.py); fails if any differs
 
 PYTHON  ?= .venv/bin/python
 BARON   ?= $(firstword $(wildcard ../baron/build/src/baron) baron)
@@ -31,7 +34,7 @@ GENERATED = build/data/title.bin
 BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short HEAD 2>/dev/null || echo NOGIT)$(shell git diff --quiet HEAD -- . ':(exclude)$(DISC)' 2>/dev/null || echo +)
 
 .DELETE_ON_ERROR:
-.PHONY: all run check disc fetch zx disasm venv clean
+.PHONY: all run check disc fetch zx disasm venv clean passes
 
 all: $(TARGET)
 
@@ -80,6 +83,27 @@ disasm: build/c2.skool
 
 build/c2.skool: build/c2.z80 $(wildcard disasm/*.ctl)
 	.venv/bin/sna2skool.py -c disasm $< > $@
+
+# The original's logs are cached: each depends on the snapshot and its own
+# scenario line (build/passes/NAME.scn, rewritten only when the line
+# changes). The port's are made afresh every time.
+SCENARIOS = $(shell awk '{ sub(/\#.*/, "") } NF { print $$1 }' tests/scenarios.txt)
+
+.PRECIOUS: build/passes/%.scn
+build/passes/%.scn: tests/scenarios.txt
+	@mkdir -p build/passes
+	@awk '{ sub(/\#.*/, "") } $$1 == "$*"' $< > $@.new
+	@cmp -s $@.new $@ || mv $@.new $@; rm -f $@.new
+
+build/passes/zx_%.json: build/passes/%.scn build/c2.z80 tools/zxpass.py
+	$(PYTHON) tools/zxpass.py $* -o $@
+
+passes: $(TARGET) $(SCENARIOS:%=build/passes/zx_%.json)
+	@failed=; for s in $(SCENARIOS); do \
+	    node tools/beepass.mjs $$s -o build/passes/bbc_$$s.json; \
+	    python3 tools/passcmp.py build/passes/zx_$$s.json build/passes/bbc_$$s.json || failed="$$failed $$s"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "passes: differ:$$failed"; exit 1; fi
 
 venv:
 	uv venv .venv && uv pip install --python .venv/bin/python skoolkit pillow py65
