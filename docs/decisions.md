@@ -138,6 +138,9 @@ ROOMDATA is paged in. A copy of all the lists in ROOMDATA doesn't fit
 54464 makes the character-row table's (58883) address by arithmetic,
 the same values, as it runs with ROOMDATA in.
 
+Later the same day: the layouts and plans are packed and the room
+drawing's code moved into ROOMDATA (decision 20).
+
 ## 10. Colour: a sprite's own colour, and the scenery's coming back (2026-10-31, provisional)
 
 The lit pixels are exactly the original's; their colour is the port's
@@ -423,3 +426,72 @@ would have, but for the bytes from 24425 to the end of its own image.
 The bytes are the original's again by the second call's end; between
 the two calls only the callers' register saves run. `preshift_pair`
 assumes those two buffers, the only pair the original has.
+
+## 20. The rooms' layouts and plans packed; the room drawing in ROOMDATA (2026-10-31, provisional)
+
+Main RAM was full, GAMEDATA had 10 bytes free and ROOMDATA 119. What
+baron offers: a section `transform` (a `FUNCTION` that rewrites a
+section's bytes as it closes), with compressors written in baron itself
+in its `examples/compress` (zx02, exomizer, exolite, an LZ of its own)
+and `LZ_PARSE`/`BITPACK` to build others. A transform packs at build
+time only; unpacking is the program's (C2 already carries dmsc's zx02
+unpacker, decision 16). So the question is which data can be unpacked
+when it's needed, into a buffer smaller than what packing saves.
+
+zx02, measured (bytes, unpacked to packed):
+
+| Data | Unpacked | zx02 | Read |
+|---|---|---|---|
+| sprites 25900-34525 | 8626 | 3904 | any time, any frame |
+| GAMEDATA's tables, font, sprite code | 7748 | 5407 | any time |
+| tiles 34526-39653 | 5128 | 2972 | a room draw, by tile number |
+| blocks 39654-43749 | 4096 | 1793 | a room draw, by block number |
+| layouts 43750-48869 | 5120 | 1975 | a room draw: 40 bytes, one room's |
+| tile attributes 48870-49510 | 641 | 119 | a room draw, by tile number |
+| plans (decision 11) | 1280 | 311 | a room draw: 10 bytes, one room's |
+| all of GAMEDATA / ROOMDATA | 16374 / 16265 | 9299 / 7134 | |
+
+Only the layouts and plans are read a room at a time; everything else
+is read by number from anywhere in it, so it must stay unpacked. Both
+banks packed whole (16433) are over 16K before any room to unpack them
+into, so packing doesn't put the game in one bank (decision 9's 16K
+work): GAMEDATA's sprites and tables, needed every frame, fill a bank
+unpacked on their own.
+
+The layouts and plans, packed in groups (zx02, each group a stream;
+the index a word a group; the buffer in ROOMDATA after its bytes, with
+a second copy of the unpacker; frames over all of `make passes`'
+scenarios against 15777 before, the unpacking skipped when the room's
+group is the one in the buffer):
+
+| | Packed + index | Buffer | Frames | Room changes a frame longer |
+|---|---|---|---|---|
+| a room a stream | 4278 + 256 | 50 | (not run) | |
+| **B. 4 rooms a stream** (chosen) | 3533 + 64 | 200 | 15784 | 10 of 55 (1 shorter) |
+| C. 8 rooms a stream | 3266 + 32 | 400 | 15788 (15805 without the skip) | |
+| 16 rooms a stream | 3053 + 16 | 800 | (not run) | |
+| exomizer, 8 rooms a stream | 3438 + 32 | 400, and its 156-byte table | (not run) | |
+
+Of the map's 434 ways out of a room, 162 lead to a room in the same
+group of 4, 231 of 8. B is chosen for the pace: a room change was
+already 1-3 frames over the original's; C leaves 98 bytes more free.
+
+That frees ROOMDATA, and what runs only with ROOMDATA in moves there
+from main RAM: the tile loop (`room_tiles`), `room_colours`,
+`make_patterns` and `make_program` (callers with GAMEDATA in go through
+`make_colours`, which pages ROOMDATA in and out). `room_scenery` stays,
+to copy the bank list and page the banks.
+
+| | Before | After (2026-10-31) |
+|---|---|---|
+| main RAM | code to &443F, workspace to &5000, 0 free | code to &4044, workspace to &4C00, 1024 free |
+| ROOMDATA | 119 free | 1583 free (code 1139 bytes, packs 3597, buffer 200) |
+| GAMEDATA | 10 free | 10 free |
+
+The rooms are drawn identically (`make rooms`: all 128). Not done, for
+Matt: the tunes' data (`music.6502`, main RAM) is read only outside play
+and would fit ROOMDATA unpacked, if the tune's tick (57664) paged
+ROOMDATA in for its reads instead of GAMEDATA; and GAMEDATA's
+room-entry tables (the monster lists 61677-62953, the tile-bank lists
+62954-63497) could join the room packs, if the code reading them took
+them from a copy as it does the bank list.
