@@ -46,3 +46,30 @@ the same geometry and handler), to sweep again here.
 The title (the tape's SCREEN$): nine splits, 6705 of its 6802 lit pixels
 in their own colour (2026-10-31). The rest are on lines that show five
 colours.
+
+## 7. The random pointer walks main RAM, seeded from the VSync count (2026-10-31, provisional)
+
+The original's only randomness is the start room: the byte at the
+pointer 61248, which the interrupt and the attract loop step and 52235
+seeds from R. The port keeps the pointer and its stepping, but:
+
+- R doesn't exist: the low byte is seeded from `vsyncs`, which, as R,
+  depends on how long the menu took.
+- The byte read at 52372 is at the pointer with bit 15 cleared, in main
+  RAM: the Spectrum's bytes at 57600 onwards (code, then tables, then
+  the ROM) aren't the BBC's, and a read from the I/O pages can
+  acknowledge an interrupt.
+
+Options kept: a seeded generator of the port's own; or reading the
+original's tables only (the pointer taken modulo their length). The
+oracle forces the start on both machines (`tests/scenarios.txt`), so
+none of this shows there.
+
+## 8. The original's DI ... EI pauses the frame interrupt's work, not the interrupt (2026-10-31, provisional)
+
+The original turns interrupts off around starting a tune (53101, 56811)
+and printing a credits page (52316), so its interrupt (57664) neither
+steps the random pointer nor plays the tune meanwhile. The BBC's
+interrupt also runs the palette program, which must go on, so `DI`
+sets `hook_off` (game.6502) and the 57664 hook does nothing while it
+is set; `EI` clears it. It starts set, until 52235's `EI`.
