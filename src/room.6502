@@ -1,3 +1,523 @@
 \ ***************************************************************************
-\ Rooms: drawing a room (53949 and its helpers 54213, 54464, 54499), its colours.
+\ Rooms: drawing a room (53949 and its helpers 54213, 54499), the panel
+\ (53550, 53823), the colours
+\ (decisions 7 and 8) and the sideways banks' paging.
+\
+\ The room's data (tiles, blocks, layouts, tile attributes: r_rooms, and
+\ its colour plan, room_plans) is in ROOMDATA, paged in only while the
+\ room draws; everything else is GAMEDATA's, paged in all the time
+\ (decision 6). So the room's tile-bank list (62954, in GAMEDATA) is
+\ copied to main RAM (bank_list) before ROOMDATA is paged in.
 \ ***************************************************************************
+
+\ The sideways banks (the loader leaves their numbers in game_bank and
+\ room_bank). romshad is the OS's copy of romsel: write both.
+.page_rooms
+    LDA room_bank : STA romshad : STA romsel
+    RTS
+.page_game
+    LDA game_bank : STA romshad : STA romsel
+    RTS
+
+\ The play area's rows shown or not (CRTC R6, the rows displayed): the
+\ port's way of hiding the room while it draws, as the original hides it
+\ by zeroing its attributes (decision 8).
+.play_hidden
+    LDA #6 : STA crtc_reg : LDA #4 : STA crtc_data
+    RTS
+.play_shown
+    LDA #6 : STA crtc_reg : LDA #SCREEN_ROWS : STA crtc_data
+    RTS
+
+\ 54213, ClearPlayAttrs: after a frame, the play area's attributes (rows
+\ 4-23) to 0, which hides it (play_hidden here). O: HL = 23295, DE =
+\ 23296, BC = 0, as its LDIR leaves them.
+.z54213
+{
+    JSR wait_vsync
+    JSR play_hidden
+    LDA #0 : TAX
+.each
+    STA attrs+128,X : STA attrs+256,X : STA attrs+512,X
+    INX : BNE each
+    LDA #LO(23295) : STA rl : LDA #HI(23295) : STA rh
+    LDA #LO(23296) : STA re : LDA #HI(23296) : STA rd
+    LDA #0 : STA rb : STA rc
+    RTS
+}
+
+\ 54499, ShowPlayAttrs: after a frame, the attribute buffer (24225) to
+\ rows 4-23's attributes, and the room shows: its palette program
+\ (pal_prog) and the rows. The original copies 768 bytes, the last 128
+\ into the printer buffer: only the 640 are the port's.
+.z54499
+{
+    JSR wait_vsync
+    LDX #0
+.each
+    LDA a24225,X : STA attrs+128,X
+    LDA a24225+256,X : STA attrs+384,X
+    INX : BNE each
+.rest
+    LDA a24225+512,X : STA attrs+640,X
+    INX : CPX #128 : BNE rest
+    LDA #LO(pal_prog) : LDY #HI(pal_prog) : JSR set_palette
+    JMP play_shown
+}
+
+\ 53949, EnterRoom: draw room A, with the player, its monsters and its
+\ item. Every register kept.
+.z53949
+{
+    ZA_AUTO1 room
+    STA room
+    LDX #ZP_REGS_END - ZP_REGS - 9  ; (BC, DE, HL, IX, IY: 10 bytes)
+    LDX #9
+.save
+    LDA rc,X : PHA
+    DEX : BPL save
+    JSR z54213
+    \ Slot 0 (the player) kept while every slot is cleared.
+    LDX #19
+.keep
+    LDA a24077,X : STA a24203,X
+    DEX : BPL keep
+    JSR z55472
+    LDA room : STA a24030
+    JSR room_scenery
+    LDX #19
+.back
+    LDA a24203,X : STA a24077,X
+    DEX : BPL back
+    \ The player redrawn from its frame and place, as drawn there.
+    LDA #0 : STA a24022
+    LDA #LO(a24077) : STA rixl : LDA #HI(a24077) : STA rixh
+    LDA a24083 : STA re : STA a24087
+    LDA a24084 : STA rd : STA a24088
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA a24092
+    JSR z57415
+    JSR z57058
+    LDA #128 : STA a24078
+    JSR z54264                      ; its monsters
+    JSR z54229                      ; its item
+    LDX #0
+.restore
+    PLA : STA rc,X
+    INX : CPX #10 : BNE restore
+    LDA room
+    RTS
+}
+
+\ 53979-54151: draw room A's scenery: 5 rows of 8 blocks of 4 x 4 tiles
+\ from row 4, each tile's pixels written (54464) and its attribute put in
+\ the buffer at 24225 (by its screen address, 57341 from 24097), shown
+\ by 54499. A tile byte becomes a tile number through the room's bank
+\ list: the first (lo, hi, base) with lo <= byte <= hi adds base, else 0.
+.room_scenery
+{
+    ZA_AUTO1 room
+    ZA_AUTO2 p
+    ZA_AUTO2 layout
+    ZA_AUTO2 block
+    ZA_AUTO2 base
+    ZA_AUTO1 brow
+    ZA_AUTO1 bcol
+    ZA_AUTO1 trow
+    ZA_AUTO1 tcol
+    ZA_AUTO1 tile
+    STA room
+    \ The bank list into main RAM (62954, a word a room).
+    ASL A : TAY
+    LDA a62954,Y : STA p : LDA a62954+1,Y : STA p+1
+    LDY #0 : LDA (p),Y : ASL A : ASL A : TAY       ; 1 + 4n bytes
+.copy
+    LDA (p),Y : STA bank_list,Y
+    DEY : BPL copy
+    JSR page_rooms
+    LDA room : JSR room_colours
+    \ The layout: 43750 + 40 * room.
+    LDA room : STA layout : LDA #0 : STA layout+1
+    ASL layout : ROL layout+1 : ASL layout : ROL layout+1 : ASL layout : ROL layout+1
+    LDA layout : STA p : LDA layout+1 : STA p+1                     ; 8 * room
+    ASL layout : ROL layout+1 : ASL layout : ROL layout+1           ; 32 * room
+    LDA layout : CLC : ADC p : STA layout
+    LDA layout+1 : ADC p+1 : STA layout+1
+    LDA layout : CLC : ADC #LO(a43750) : STA layout
+    LDA layout+1 : ADC #HI(a43750) : STA layout+1
+    LDA #0 : STA brow
+.block_row
+    LDA #0 : STA bcol
+.each_block
+    \ The block: 39654 + 16 * its number.
+    LDY #0 : LDA (layout),Y : STA block : STY block+1
+    ASL block : ROL block+1 : ASL block : ROL block+1
+    ASL block : ROL block+1 : ASL block : ROL block+1
+    LDA block : CLC : ADC #LO(a39654) : STA block
+    LDA block+1 : ADC #HI(a39654) : STA block+1
+    LDA #0 : STA trow
+.tile_row
+    LDA #0 : STA tcol
+.each_tile
+    LDA trow : ASL A : ASL A : ORA tcol : TAY
+    LDA (block),Y : STA tile
+    \ The bank.
+    LDA #0 : STA base : STA base+1
+    LDX bank_list : BEQ no_bank
+    LDY #1
+.bank
+    LDA tile : CMP bank_list,Y : BCC next_bank       ; below lo
+    CMP bank_list+1,Y : BEQ found : BCC found        ; up to hi
+.next_bank
+    INY : INY : INY : INY
+    DEX : BNE bank
+    JMP no_bank
+    ZA_UNREACHABLE
+.found
+    LDA bank_list+2,Y : STA base
+    LDA bank_list+3,Y : STA base+1
+.no_bank
+    \ Its attribute, 48870 + ((base + byte) AND 8191), first: its ink
+    \ colours the pixels (the original reads it after them).
+    LDA tile : CLC : ADC base : STA p
+    LDA base+1 : ADC #0 : AND #&1F : STA p+1
+    LDA p : CLC : ADC #LO(a48870) : STA p
+    LDA p+1 : ADC #HI(a48870) : STA p+1
+    LDY #0 : LDA (p),Y : PHA
+    AND #7 : STA glyph_ink
+    \ Its pixels, 34526 + 8 * (base + byte), at row B, column C.
+    LDA base : STA re : LDA base+1 : STA rd
+    ASL re : ROL rd : ASL re : ROL rd : ASL re : ROL rd
+    LDA re : CLC : ADC #LO(a34526) : STA re
+    LDA rd : ADC #HI(a34526) : STA rd
+    LDA brow : ASL A : ASL A : ADC trow : ADC #4 : STA rb
+    LDA bcol : ASL A : ASL A : ADC tcol : STA rc
+    LDA tile : JSR z54464
+    LDA #LO(a24097) : STA re : LDA #HI(a24097) : STA rd
+    JSR z57341
+    PLA : LDY #0 : STA (rl),Y
+    INC tcol : LDA tcol : CMP #4 : BNE each_tile
+    INC trow : LDA trow : CMP #4 : BNE tile_row
+    INC layout : BNE laid : INC layout+1
+.laid
+    INC bcol : LDA bcol : CMP #8 : BNE each_block
+    INC brow : LDA brow : CMP #5 : BNE block_row
+    JSR page_game
+    JMP z54499
+}
+
+\ --- The colours (decisions 7 and 8) ---------------------------------------
+
+\ Each row's logical 1-3 as BBC colours: rp1, rp2, rp3 (24 each). The
+\ panel's rows are fixed (tools/colours.py's PANEL_ROWS).
+.panel_rp2  EQUB 5, 5, 1, 6         ; magenta, magenta, red, cyan
+PANEL_RP1 = 3                       ; yellow
+PANEL_RP3 = 2                       ; green
+
+\ Room A's colours from its plan (room_plans: ROOMDATA paged in): rows
+\ 4-23 from the panel's last, logical 1 yellow, then make_patterns and
+\ make_program.
+.room_colours
+{
+    ZA_AUTO2 p
+    ZA_AUTO1 r
+    ZA_AUTO1 nib
+    \ p = room_plans + 10 * A
+    STA p : LDA #0 : STA p+1
+    ASL p : ROL p+1 : LDA p : LDX p+1          ; 2A
+    ASL p : ROL p+1 : ASL p : ROL p+1          ; 8A
+    CLC : ADC p : STA p : TXA : ADC p+1 : STA p+1
+    LDA p : CLC : ADC #LO(room_plans) : STA p
+    LDA p+1 : ADC #HI(room_plans) : STA p+1
+    JSR panel_colours
+    LDX #4
+.row
+    LDA #PANEL_RP1 : STA rp1,X
+    LDA rp2-1,X : STA rp2,X
+    LDA rp3-1,X : STA rp3,X
+    TXA : SEC : SBC #4 : LSR A : TAY
+    LDA (p),Y
+    BCS low
+    LSR A : LSR A : LSR A : LSR A
+.low
+    AND #15 : BEQ next
+    STA nib
+    AND #7
+    LDY nib : CPY #8 : BCS l3
+    STA rp2,X
+    JMP next
+    ZA_UNREACHABLE
+.l3
+    STA rp3,X
+.next
+    INX : CPX #SCREEN_ROWS : BNE row
+    JSR make_patterns
+    JMP make_program
+}
+
+\ The panel's rows into rp1-3 (rows 0-3).
+.panel_colours
+{
+    LDX #3
+.row
+    LDA #PANEL_RP1 : STA rp1,X
+    LDA panel_rp2,X : STA rp2,X
+    LDA #PANEL_RP3 : STA rp3,X
+    DEX : BPL row
+    RTS
+}
+
+\ Colours for a screen that isn't a room: the panel's rows, and below
+\ them the panel's last row's (yellow, cyan, green).
+.plain_colours
+{
+    JSR panel_colours
+    LDX #4
+.row
+    LDA rp1+3 : STA rp1,X
+    LDA rp2+3 : STA rp2,X
+    LDA rp3+3 : STA rp3,X
+    INX : CPX #SCREEN_ROWS : BNE row
+    JSR make_patterns
+    JMP make_program
+}
+
+\ The pattern pairs (pat_even, pat_odd at ink * 32 + row) for every row
+\ and Spectrum ink, from rp1-3: tools/colours.py's pick. Each pair of
+\ logical colours (a, b) scores 4 * the colours it is out from the ink's,
+\ and a dither (a <> b) 1 more and 2 for each colour the two share; the
+\ lowest wins, the first on a tie. Black, which no lit pixel can be,
+\ shows as white.
+.pair_a     EQUB 1, 2, 3, 1, 1, 2
+.pair_b     EQUB 1, 2, 3, 2, 3, 3
+.pop3       EQUB 0, 1, 1, 2, 1, 2, 2, 3
+.cb_aa      FOR c = 0..3 : EQUB cbyte(c) AND &AA : NEXT
+.cb_55      FOR c = 0..3 : EQUB cbyte(c) AND &55 : NEXT
+.zx_to_bbc  EQUB 7, 4, 1, 5, 2, 6, 3, 7     ; (ink 0 as white)
+
+.make_patterns
+{
+    ZA_AUTO 4, q                    ; q+1..q+3: the row's logical 1-3
+    ZA_AUTO1 row
+    ZA_AUTO1 ink
+    ZA_AUTO1 want
+    ZA_AUTO1 best
+    ZA_AUTO1 ba
+    ZA_AUTO1 bb
+    ZA_AUTO1 s
+    ZA_AUTO1 j
+    LDA #0 : STA row
+.each_row
+    LDX row
+    LDA rp1,X : STA q+1
+    LDA rp2,X : STA q+2
+    LDA rp3,X : STA q+3
+    LDA #0 : STA ink
+.each_ink
+    LDX ink : LDA zx_to_bbc,X : STA want
+    LDA #255 : STA best
+    LDA #0 : STA j
+.each_pair
+    LDX j
+    LDY pair_b,X
+    LDA pair_a,X : TAX
+    LDA q,X : ORA q,Y : EOR want : TAX
+    LDA pop3,X : ASL A : ASL A : STA s
+    LDX j
+    LDA pair_a,X : CMP pair_b,X : BEQ solid
+    TAX : LDA q,X : AND q,Y : TAX
+    LDA pop3,X : ASL A : SEC : ADC s : STA s    ; + 1 + 2 * shared
+.solid
+    LDA s : CMP best : BCS worse
+    STA best
+    LDX j
+    LDA pair_a,X : STA ba
+    LDA pair_b,X : STA bb
+.worse
+    INC j : LDA j : CMP #6 : BNE each_pair
+    \ a b a b on even lines, b a b a on odd.
+    LDA ink : ASL A : ASL A : ASL A : ASL A : ASL A : ORA row : TAY
+    LDX ba : LDA cb_aa,X : LDX bb : ORA cb_55,X : STA pat_even,Y
+    LDX bb : LDA cb_aa,X : LDX ba : ORA cb_55,X : STA pat_odd,Y
+    INC ink : LDA ink : CMP #8 : BNE each_ink
+    INC row : LDA row : CMP #SCREEN_ROWS : BNE each_row
+    RTS
+}
+    ASSERT SCREEN_ROWS <= 32        ; (ink * 32 + row)
+
+\ The palette program (pal_prog, irq.6502's set_palette's format) for
+\ rp1-3: the VSync palette row 0's; a split at each row boundary for
+\ each logical colour that changes there (two at one boundary land two
+\ lines apart: the plans never have them); split 0 lands at line 8
+\ (FIRST_SPLIT_LINE) whatever, so a split there that changes nothing if
+\ none does.
+.make_program
+{
+    ZA_AUTO1 n
+    ZA_AUTO1 r
+    ZA_AUTO1 line
+    ZA_AUTO1 k
+    ZA_AUTO2 period
+    LDA #0 : STA pal_prog+1
+    LDA rp1 : STA pal_prog+2
+    LDA rp2 : STA pal_prog+3
+    LDA rp3 : STA pal_prog+4
+    LDA #0 : STA n
+    LDA #1 : STA r
+.boundary
+    LDA r : ASL A : ASL A : ASL A : STA line
+    LDX r
+    LDA rp1,X : CMP rp1-1,X : BEQ not1
+    LDY #1 : JSR add
+.not1
+    LDX r
+    LDA rp2,X : CMP rp2-1,X : BEQ not2
+    LDY #2 : JSR add
+.not2
+    LDX r
+    LDA rp3,X : CMP rp3-1,X : BEQ not3
+    LDY #3 : JSR add
+.not3
+    LDA n : BNE some                ; (row 1: split 0 must land)
+    LDA rp1 : LDY #1 : JSR add
+.some
+    INC r : LDA r : CMP #SCREEN_ROWS : BNE boundary
+    \ The periods: from each split to the next, then none.
+    LDA n : STA pal_prog
+    ASL A : CLC : ADC #5 : TAY      ; after the pairs
+    LDA #0 : STA k
+.periods
+    LDX k : INX : CPX n : BCS last
+    LDA split_lines,X : SEC : SBC split_lines-1,X   ; the lines between
+    STA period : LDA #0 : STA period+1
+    LDX #6
+.times64
+    ASL period : ROL period+1
+    DEX : BNE times64
+    LDA period : SEC : SBC #2 : STA pal_prog,Y : INY  ; (t1_period)
+    LDA period+1 : SBC #0 : STA pal_prog,Y : INY
+    INC k
+    JMP periods
+    ZA_UNREACHABLE
+.last
+    LDA #&FF
+    STA pal_prog,Y : INY : STA pal_prog,Y : INY
+    STA pal_prog,Y : INY : STA pal_prog,Y
+    RTS
+\ A split at line (moved on 2 for each one already there): logical Y,
+\ colour A.
+.add
+    LDX n : CPX #MAX_SPLITS : BCS full
+    PHA
+    LDA line : STA split_lines,X
+    INC line : INC line
+    TXA : ASL A : TAX
+    TYA : STA pal_prog+5,X
+    PLA : STA pal_prog+6,X
+    INC n
+.full
+    RTS
+}
+    ASSERT MAX_SPLITS * 2 + 5 + 2 * (MAX_SPLITS + 1) <= PAL_PROG_LEN
+
+\ --- The panel -----------------------------------------------------------
+
+\ 53550, DrawPanel: six lives (frame 1 at 58796's places), the
+\ attributes of rows 0-3 to 70, SCORE, MAGIC, the witches' faces, the
+\ score and magic, the mouths at rest (53823). The attributes are set
+\ before the lives here, not after: a frame without colour takes its
+\ cell's (decision 7), which the original's attributes give it after;
+\ the lives' frame XORs no attribute, so the attributes end the same.
+.z53550
+{
+    ZA_AUTO1 n
+    LDA #6 : STA a24035
+    LDX #127
+.attr
+    LDA #70 : STA attrs,X
+    LDA #6 : STA scen_ink,X
+    DEX : BPL attr
+    LDA #LO(a58796) : STA rixl : LDA #HI(a58796) : STA rixh
+    LDY #0 : LDA (rix),Y : STA rd
+    INC rixl : BNE l1 : INC rixh
+.l1
+    LDA #6 : STA n
+.life
+    LDY #0 : LDA (rix),Y : STA re
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA #1 : JSR z57415
+    JSR z57194
+    INC rixl : BNE l2 : INC rixh
+.l2
+    DEC n : BNE life
+    LDA #0 : STA rb : LDA #13 : STA rc
+    LDA #LO(a58032) : STA rl : LDA #HI(a58032) : STA rh : JSR z54363
+    LDA #2 : STA rb : LDA #13 : STA rc
+    LDA #LO(a58039) : STA rl : LDA #HI(a58039) : STA rh : JSR z54363
+    LDA #0 : STA rb : STA rc
+    LDA #LO(a61162) : STA rl : LDA #HI(a61162) : STA rh : JSR z54363
+    LDA #LO(a58835) : STA re : LDA #HI(a58835) : STA rd
+    JSR z57616
+    LDA #LO(a58835) : STA re : LDA #HI(a58835) : STA rd
+    JSR z57568
+    LDA #0 : STA rb : LDA #28 : STA rc
+    LDA #LO(a61189) : STA rl : LDA #HI(a61189) : STA rh : JSR z54363
+    LDA #53
+    JMP z53823
+}
+
+\ 53823, DrawHeadEyes: XOR frame A on the left head (x 4, y 13) and A + 3
+\ on the right (x 112), through 57194. A kept.
+.z53823
+{
+    ZA_AUTO1 frame
+    ZA_AUTO1 lines
+    ZA_AUTO1 width
+    STA frame
+    LDA #4 : STA re : LDA #13 : STA rd
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA frame : JSR z57415
+    LDA rb : STA lines : LDA rc : STA width
+    LDA #LO(a24427) : STA rl : LDA #HI(a24427) : STA rh
+    LDA #112 : STA re
+    LDA frame : CLC : ADC #3
+    JSR z57415
+    JSR z57194
+    LDA lines : STA rb : LDA width : STA rc
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA #4 : STA re
+    LDA frame
+    JMP z57194
+}
+
+\ --- The viewer and the demo -----------------------------------------------
+
+IF DEFINED(VIEWER)
+\ The viewer (-D VIEWER=1, make rooms): the panel, then room view_num
+\ drawn through 53949's drawing (54213, then 53979-54151) each time it
+\ changes; tools/roomcheck.mjs sets it and runs to viewer_wait.
+.viewer
+    JSR z53087
+    JSR z53550
+    LDA #&FF : STA view_shown
+.viewer_wait
+    LDA view_num : CMP view_shown : BEQ viewer_wait
+    STA view_shown
+    JSR z54213
+    LDA view_num : STA a24030
+    JSR room_scenery
+    JMP viewer_wait
+ENDIF
+
+IF DEFINED(DEMO_ROOM)
+\ Until the game is written (game.6502's 52180): the panel and room 97,
+\ to see the drawing on the release disc.
+.demo
+    JSR z53087
+    JSR z53550
+    JSR z54213
+    LDA #97 : STA a24030
+    JSR room_scenery
+.demo_shown
+    JMP demo_shown
+ENDIF
