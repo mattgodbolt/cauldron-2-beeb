@@ -105,8 +105,7 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
     ZA_AUTO1 m
     ZA_AUTO1 r8                     ; its character row * 8
     ZA_AUTO1 i
-    ZA_AUTO1 bits
-    ZA_AUTO1 sb
+    ZA_AUTO1 old
     LDA one : BEQ full
     CPX lx : BNE full
     TYA : AND #7 : BEQ full         ; (a new character row)
@@ -166,14 +165,15 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
 .cells
     \ Each half of each byte: a pixel the XOR lights takes pat if unlit,
     \ goes black if lit; the others stay. All unlit (most often), that's
-    \ the XOR's pixels AND pat; else mix.
+    \ the XOR's pixels AND pat; else (mixed: an erase's, mostly)
+    \ new = old EOR (the XOR's AND (old OR (pat AND unlit))).
     LDY #0 : STY i
     LDY spr_ink : BMI scenery
     LDA (pp),Y : STA pat
     LDY #0
 .own
     LDA (xr_img),Y : BEQ own_next   ; (nothing to XOR)
-    STA bits : TAX
+    TAX
     LDY #0 : LDA (scr),Y : BNE own_mix_l
     LDA spread_hi,X : AND pat : STA (scr),Y
 .own_r
@@ -187,18 +187,21 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
     CPY m : BNE own
     BEQ run_done                    ; (always)
 .own_mix_l
-    LDA spread_hi,X : JSR mix
-    LDX bits : JMP own_r
+    STA old : TAY
+    LDA unlit,Y : AND pat : ORA old : AND spread_hi,X : EOR old
+    LDY #0 : STA (scr),Y
+    JMP own_r
 .own_mix_r
-    LDA spread_lo,X : JSR mix
+    STA old : TAY
+    LDA unlit,Y : AND pat : ORA old : AND spread_lo,X : EOR old
+    LDY #8 : STA (scr),Y
     JMP own_next
 .scenery
     LDY #0
 .cell
     LDA (xr_img),Y : BEQ cell_next
-    STA bits
+    TAX
     LDA (sp),Y : TAY : LDA (pp),Y : STA pat     ; the cell's scenery ink's
-    LDX bits
     LDY #0 : LDA (scr),Y : BNE cell_mix_l
     LDA spread_hi,X : AND pat : STA (scr),Y
 .cell_r
@@ -222,20 +225,15 @@ ZA_AUTO1 xr_n                   ; ... and how many (1-255)
     LDA hy : ADC #0 : TAY
     JMP run
 .cell_mix_l
-    LDA spread_hi,X : JSR mix
-    LDX bits : JMP cell_r
+    STA old : TAY
+    LDA unlit,Y : AND pat : ORA old : AND spread_hi,X : EOR old
+    LDY #0 : STA (scr),Y
+    JMP cell_r
 .cell_mix_r
-    LDA spread_lo,X : JSR mix
+    STA old : TAY
+    LDA unlit,Y : AND pat : ORA old : AND spread_lo,X : EOR old
+    LDY #8 : STA (scr),Y
     JMP cell_next
-\ A half with lit pixels: A = the XOR's (maybe none), Y = its offset.
-\ new = old EOR (sb AND (old OR (pat AND unlit))). X changed.
-.mix
-    BEQ mixed
-    STA sb
-    LDA (scr),Y : TAX
-    LDA unlit,X : AND pat : ORA (scr),Y : AND sb : EOR (scr),Y : STA (scr),Y
-.mixed
-    RTS
 }
 xor_run = xor_down.full
 ENDSECTION
