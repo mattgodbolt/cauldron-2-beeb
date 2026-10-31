@@ -305,6 +305,16 @@ ENDSECTION
 
 \ The game's workspace, after its code: not in the file.
 SECTION Work, org = code_end, guard = screen, virtual = TRUE
+    ALIGN &100
+.zx_lo          SKIP 256        ; zxscreen.6502's tables
+.zx_hi          SKIP 256
+.lit_lo         SKIP 256
+.spread_hi      SKIP 256        ; draw.6502's
+.spread_lo      SKIP 256
+.unlit          SKIP 256
+.pat_even       SKIP 8 * SCREEN_ROWS    ; the rows' ink patterns (room.6502's make_patterns)
+.pat_odd        SKIP 8 * SCREEN_ROWS    ; (xor_down: pat_even + the line's parity * 8 * SCREEN_ROWS)
+\ Variables, in what the patterns leave of their two pages.
 .bank_list      SKIP BANK_LIST_MAX  ; the room's tile-bank list (62954), copied
 IF DEFINED(VIEWER)
 .view_num       SKIP 1          ; the viewer's room (tools/roomcheck.mjs sets it)
@@ -314,16 +324,8 @@ TEST_CALLS = 16
 .test_n         SKIP 1          ; the sprite calls to make (tools/spritecheck.mjs)
 .test_calls     SKIP 6 * TEST_CALLS
 ENDIF
+    ASSERT P% <= pat_even + &200
     ALIGN &100
-.zx_lo          SKIP 256        ; zxscreen.6502's tables
-.zx_hi          SKIP 256
-.lit_lo         SKIP 256
-.spread_hi      SKIP 256        ; draw.6502's
-.spread_lo      SKIP 256
-.unlit          SKIP 256
-.pat_even       SKIP 256        ; the rows' ink patterns (room.6502's make_patterns)
-.pat_odd        SKIP 256
-    ASSERT pat_odd = pat_even + 256     ; (xor_run: + the line's parity)
 .scen_ink       SKIP 768        ; each cell's scenery ink (draw.6502)
 .work_end
     PRINT "code &0E00-&", ~code_end, ", workspace to &", ~work_end, " (", screen - work_end, " bytes free)"
