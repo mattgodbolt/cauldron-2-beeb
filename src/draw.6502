@@ -75,13 +75,12 @@ ZA_AUTO1 pat                    ; the pattern of the byte being written
     ZA_AUTO2 p
     STX p
     TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA p+1
-    TXA : PHA : LDX #0
-    LDA (p,X)
-    STA p
-    PLA : TAX
-    LDA p
+    STY scen_y
+    LDY #0 : LDA (p),Y
+    LDY scen_y
     RTS
 }
+ZA_AUTO1 scen_y
 
 \ XOR the Spectrum byte A onto the Spectrum screen at X (low), Y (high),
 \ coloured as the head of the file says (spr_ink). An address in the
@@ -130,9 +129,9 @@ ZA_AUTO1 pat                    ; the pattern of the byte being written
     CPY #&58 : BCS attr
     STX p                           ; the cell's scenery ink
     TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA p+1
-    TXA : PHA : LDX #0
-    LDA glyph_ink : STA (p,X)
-    PLA : TAX
+    STY scen_y
+    LDY #0 : LDA glyph_ink : STA (p),Y
+    LDY scen_y
     LDA glyph_ink : JSR zx_cell
     LDY #0
     LDX bits : LDA spread_hi,X : AND pat : STA (zx_ptr),Y
@@ -233,11 +232,11 @@ ZA_AUTO1 pat                    ; the pattern of the byte being written
     DEC lim : BMI next              ; (DEC D : JP M: past the limit)
     TXA : PHA
     LDY #0 : LDA (img),Y
-    LDY line+1 : CPY #&40 : BCS screen
+    LDY line+1 : CPY #&40 : BCS on_screen
     LDY #0 : EOR (line),Y : STA (line),Y         ; the sink
     JMP inc
     ZA_UNREACHABLE
-.screen
+.on_screen
     LDX line : JSR xor_zx
 .inc
     INC line : BNE inced : INC line+1
@@ -518,14 +517,14 @@ ZA_AUTO1 src_y
 .z54363
 {
     ZA_AUTO2 str
-    ZA_AUTO1 start
+    ZA_AUTO1 col0
     LDA rl : STA str : LDA rh : STA str+1
-    LDA rc : STA start
+    LDA rc : STA col0
 .next
     LDY #0 : LDA (str),Y
     CMP #'$' : BEQ end
     CMP #13 : BNE not_cr
-    INC rb : LDA start : STA rc
+    INC rb : LDA col0 : STA rc
     JMP advance
     ZA_UNREACHABLE
 .not_cr
@@ -565,12 +564,13 @@ ZA_AUTO1 src_y
     LDY #0 : LDA a24024 : STA (rl),Y
     INC rc
 .advance
-    INC str : BNE next : INC str+1
+    INC str : BNE adv : INC str+1
+.adv
     JMP next
     ZA_UNREACHABLE
 .end
     LDA str : STA rl : LDA str+1 : STA rh
-    LDA start : STA rc
+    LDA col0 : STA rc
     LDA #'$'
     RTS
 }
@@ -580,7 +580,6 @@ ZA_AUTO1 src_y
 \ inks with them.
 .z53087
 {
-    ZA_AUTO2 p
     LDA screen : PHA : LDA screen+8 : PHA
     JSR cls
     PLA : STA screen+8 : PLA : STA screen

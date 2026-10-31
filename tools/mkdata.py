@@ -130,7 +130,7 @@ def main():
 
     # The tile-bank lists: the longest, for the copy room entry makes in
     # main RAM (src/room.6502).
-    longest = max(1 + 5 * mem[word(ROOM_BANKS + 2 * r)] for r in range(NUM_ROOMS))
+    longest = max(1 + 4 * mem[word(ROOM_BANKS + 2 * r)] for r in range(NUM_ROOMS))
 
     def roomdata(f):
         lo, hi = region["r_rooms"]
