@@ -353,7 +353,7 @@ nothing outlives a call; the XOR's routines in GAMEDATA are now
 `xor_lines`, `xor_line` and `xor_seg` (journal, "the XOR a character row
 at a time").
 
-## 18. The music as it's written, not as the beeper plays it (2026-10-31, provisional)
+## 18. The music as it's written, not as the beeper plays it (2026-10-31; Matt approved it on hearing it)
 
 Matt asked for the tunes "as intended": the voices on the SN's own
 channels, sounding as the composer wrote them, rather than the beeper's
