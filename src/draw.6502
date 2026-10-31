@@ -588,6 +588,7 @@ ENDSECTION
     ZA_AUTO1 t
     ZA_AUTO1 yy
     ZA_AUTO1 frame
+    ZA_AUTO1 le
     STA frame
     \ The two bytes before the buffer, and 24052 = HL - 2.
     LDA rl : SEC : SBC #2 : STA q : STA a24052
@@ -658,44 +659,38 @@ ENDSECTION
     JMP tail
     ZA_UNREACHABLE
 .some
-    LDX k : CPX #4 : BEQ f4_line : BCC f2_line
+    \ Y: the byte in the frame, and q + Y its place in the buffer (q one
+    \ on at each line's zero); le: Y at the line's end; A = t = 0.
+    LDY #0 : LDA w : STA le
+    TYA
+    LDX k : CPX #4 : BEQ f4_test : BCC f2_test : BCS f6_test
     \ Six bits: the byte >> 6, and the one before's low six bits on top.
-.f6_line
-    LDY #0 : CPY w : BEQ f6_zero
 .f6_byte
-    LDA (gfx),Y
-.f6_put
-    TAX : ASL A : ROL A : ROL A : AND #3 : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    ASL A : ROL A : ROL A : AND #3 : ORA t : STA (q),Y
     TXA : ASL A : ASL A : STA t
-    INY : CPY w : BCC f6_byte : BEQ f6_zero
-    JSR next_line : BNE f6_line
+    INY
+.f6_test
+    CPY le : BNE f6_byte
+    JSR line_end : BNE f6_test
     BEQ tail                        ; (always)
-.f6_zero
-    LDA #0 : BEQ f6_put             ; (always)
-.f4_line
-    LDY #0 : CPY w : BEQ f4_zero
 .f4_byte
-    LDA (gfx),Y
-.f4_put
-    TAX : LSR A : LSR A : LSR A : LSR A : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    LSR A : LSR A : LSR A : LSR A : ORA t : STA (q),Y
     TXA : ASL A : ASL A : ASL A : ASL A : STA t
-    INY : CPY w : BCC f4_byte : BEQ f4_zero
-    JSR next_line : BNE f4_line
+    INY
+.f4_test
+    CPY le : BNE f4_byte
+    JSR line_end : BNE f4_test
     BEQ tail                        ; (always)
-.f4_zero
-    LDA #0 : BEQ f4_put             ; (always)
-.f2_line
-    LDY #0 : CPY w : BEQ f2_zero
 .f2_byte
-    LDA (gfx),Y
-.f2_put
-    TAX : LSR A : LSR A : ORA t : STA (q),Y
+    LDA (gfx),Y : TAX
+    LSR A : LSR A : ORA t : STA (q),Y
     TXA : ROR A : ROR A : ROR A : AND #&C0 : STA t
-    INY : CPY w : BCC f2_byte : BEQ f2_zero
-    JSR next_line : BNE f2_line
-    BEQ tail                        ; (always)
-.f2_zero
-    LDA #0 : BEQ f2_put             ; (always)
+    INY
+.f2_test
+    CPY le : BNE f2_byte
+    JSR line_end : BNE f2_test
 .tail
     \ The tail in place, after the last line's zero.
     LDA th : BPL has_tail
@@ -749,15 +744,29 @@ ENDSECTION
 \ Each line's w bytes, then a zero, from HL.
 .copy
     JSR start_lines : BEQ copied
+    LDY #0 : CLC
 .copy_line
-    LDY #0 : CPY w : BEQ zero
+    \ Y as the fused copy's, but taken back to 0 (q and gfx on by it)
+    \ before a line would run it past 255 (or with C set, as after one
+    \ that was).
+    TYA : ADC w : BCC copy_go
+    TYA : CLC : ADC q : STA q
+    BCC cl1 : INC q+1
+.cl1
+    TYA : CLC : ADC gfx : STA gfx
+    BCC cl2 : INC gfx+1
+.cl2
+    LDY #0
+.copy_go
+    LDX w : BEQ zero
 .copy_byte
     LDA (gfx),Y : STA (q),Y
-    INY : CPY w : BNE copy_byte
+    INY : DEX : BNE copy_byte
 .zero
-    LDA #0 : STA (q),Y
-    INY
-    JSR next_line : BNE copy_line
+    TXA : STA (q),Y
+    INC q : BNE cl3 : INC q+1
+.cl3
+    DEC lines : BNE copy_line
 .copied
     LDA k : BEQ done
     RTS
@@ -768,14 +777,14 @@ ENDSECTION
     LDA rb : STA lines
     RTS
 
-\ Past a line of Y bytes in the buffer, w in the frame. Z set: the last.
-.next_line
-    TYA : CLC : ADC q : STA q
-    BCC nl1 : INC q+1
-.nl1
-    LDA gfx : CLC : ADC w : STA gfx
-    BCC nl2 : INC gfx+1
-.nl2
+\ The fused copy's line end: its zero shifted, A = t, at q + Y; q on
+\ one; le the next line's end; A = t = 0. Z set: the last line.
+.line_end
+    STA (q),Y
+    INC q : BNE le1 : INC q+1
+.le1
+    TYA : CLC : ADC w : STA le
+    LDA #0 : STA t
     DEC lines
     RTS
 
