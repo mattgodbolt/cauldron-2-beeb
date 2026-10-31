@@ -26,7 +26,7 @@ ENDIF
 ZP_FIXED = &70
 vsyncs      = ZP_FIXED + 0      ; VSyncs so far (irq.6502)
 splits_on   = ZP_FIXED + 1      ; the palette splits run (irq.6502)
-irq_split   = ZP_FIXED + 2      ; 4 * the next split
+irq_split   = ZP_FIXED + 2      ; split_rec's index of the next split
 vsync_hook  = ZP_FIXED + 3      ; called at VSync if its high byte isn't 0 (2 bytes)
 unwritten_at = ZP_FIXED + 5     ; the original's address of a stub reached (2 bytes)
 zx_ptr      = ZP_FIXED + 7      ; zxscreen.6502's: our screen address (2 bytes)
@@ -36,7 +36,8 @@ room_bank   = ZP_FIXED + 11     ; ... and ROOMDATA (room.6502's page_game, page_
 xor_erase   = ZP_FIXED + 12     ; non-zero: the next 57058 / 57194 erases (draw.6502)
 glyph_ink   = ZP_FIXED + 13     ; the ink 54464 writes in (draw.6502)
 machine     = ZP_FIXED + 14     ; OSBYTE 0's X, read by C2's loader (input.6502's joy_init)
-ZP_END      = ZP_FIXED + 15
+irq_x       = ZP_FIXED + 15     ; the interrupted X (irq.6502)
+ZP_END      = ZP_FIXED + 16
     ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
 
 SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF
@@ -291,12 +292,12 @@ SECTION Vars, org = &0700, virtual = TRUE
 .vars       SKIP 25100 - 24000
 \ After them, to page &0D, the palette's workspace.
 .frame_ula      SKIP 16         ; the palette VSync writes (irq.6502)
-.split_ula      SKIP 4 * MAX_SPLITS ; each split's four writes
-.split_latch    SKIP 2 * (MAX_SPLITS + 1)   ; T1's periods
+.split_first    SKIP 4          ; T1's count from VSync to split 0, and latch
+.split_rec      SKIP SPLIT_REC * MAX_SPLITS ; each split's writes and latch
 .rp1            SKIP SCREEN_ROWS ; each row's logical 1-3 colours (room.6502)
 .rp2            SKIP SCREEN_ROWS
 .rp3            SKIP SCREEN_ROWS
-PAL_PROG_LEN = 1 + 4 + 2 * MAX_SPLITS + 2 * (MAX_SPLITS + 1)
+PAL_PROG_LEN = 1 + 4 + 2 * MAX_SPLITS + 2 * (MAX_SPLITS + 2)
 .pal_prog       SKIP PAL_PROG_LEN ; the screen's palette program (make_program)
 .split_lines    SKIP MAX_SPLITS ; ... its splits' lines
 .pat_q          SKIP 4          ; make_patterns' row: logical 1-3 at +1

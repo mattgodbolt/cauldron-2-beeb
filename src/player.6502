@@ -9,8 +9,9 @@
 \ height.
 \
 \ Collision reads the Spectrum's screen (sprites included) with zx_read
-\ on the original's screen addresses, doing the original's arithmetic on
-\ HL, and the attributes through 57326 and 57355.
+\ (55095 with its own row's address) on the original's screen addresses,
+\ doing the original's arithmetic on HL, and the attributes through 57326
+\ and 57355.
 \
 \ Routines called here, and what this code needs of them (the original's
 \ contracts):
@@ -325,24 +326,36 @@
 \ 55095 TEST_UNITS: B X units from unit A, on the row at 24040. Z clear
 \ (NZ) if one is lit, with HL its screen byte. Units off the screen (X - 12
 \ not 0-127) are skipped. (The original returns the unit - 12 in A and C;
-\ its callers don't read them.)
+\ its callers don't read them; nor HL after a miss, which is left alone.)
+\ The row is ours once: 24040 is a row's start (x = 0, from 57307, moved
+\ a line at a time), so unit u's byte is ours at the row's address + u * 4
+\ AND &1F8 (the byte * 16 and its half * 8), its pixels unit_lit's.
 .z55095
 {
-    SEC : SBC #12
+    ZA_AUTO2 p
+    ZA_AUTO1 page
+    SEC : SBC #12 : STA rc
+    LDY a24040
+    LDA a24040+1 : AND #7 : ORA zx_lo,Y : STA p
+    LDA a24040+1 : AND #&18 : ASL A : ADC zx_hi,Y : STA page   ; (as zx_addr)
 .unit                               ; (55097)
-    STA rc
-    CMP #128 : BCS next
-    LSR A : LSR A
-    CLC : ADC a24040 : STA rl
-    LDA a24040+1 : ADC #0 : STA rh
+    LDA rc : CMP #128 : BCS next
+    ASL A : ASL A : AND #&F8 : TAY
+    LDA page : ADC #0 : STA p+1     ; (C: bytes 16-31, the page after)
     LDA rc : AND #3 : TAX
     LDA a61158,X : STA re           ; PIXEL_MASKS
-    JSR zx_read : AND re : BNE done
+    LDA (p),Y : AND unit_lit,X : BNE hit
 .next                               ; (55126)
-    LDA rc : CLC : ADC #1
+    INC rc
     DEC rb : BNE unit
     LDA #0
-.done
+    RTS
+.hit
+    PHA                             ; HL = the lit byte
+    LDA rc : LSR A : LSR A
+    CLC : ADC a24040 : STA rl
+    LDA a24040+1 : ADC #0 : STA rh
+    PLA                             ; (not 0: NZ)
     RTS
 }
 

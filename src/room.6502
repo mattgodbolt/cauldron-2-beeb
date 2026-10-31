@@ -395,9 +395,8 @@ PANEL_RP3 = 2                       ; green
 \ The palette program (pal_prog, irq.6502's set_palette's format) for
 \ rp1-3: the VSync palette row 0's; a split at each row boundary for
 \ each logical colour that changes there (two at one boundary land two
-\ lines apart: the plans never have them); split 0 lands at line 8
-\ (FIRST_SPLIT_LINE) whatever, so a split there that changes nothing if
-\ none does.
+\ lines apart: the plans never have them). None where nothing changes:
+\ VSync's count reaches the first split wherever it is (split_count).
 .make_program
 {
     ZA_AUTO1 n
@@ -405,6 +404,7 @@ PANEL_RP3 = 2                       ; green
     ZA_AUTO1 line
     ZA_AUTO1 k
     ZA_AUTO2 period
+    ZA_AUTO2 base
     LDA #0 : STA pal_prog+1
     LDA rp1 : STA pal_prog+2
     LDA rp2 : STA pal_prog+3
@@ -425,24 +425,26 @@ PANEL_RP3 = 2                       ; green
     LDA rp3,X : CMP rp3-1,X : BEQ not3
     LDY #3 : JSR add
 .not3
-    LDA n : BNE some                ; (row 1: split 0 must land)
-    LDA rp1 : LDY #1 : JSR add
-.some
     INC r : LDA r : CMP #SCREEN_ROWS : BNE boundary
-    \ The periods: from each split to the next, then none.
+    \ T1: VSync's count to split 0 (split_count), the periods from each
+    \ split to the next (t1_period), then none.
     LDA n : STA pal_prog
     ASL A : CLC : ADC #5 : TAY      ; after the pairs
     LDA #0 : STA k
+    LDA #FIRST_SPLIT_LINE : STA line
+    LDA #LO(SPLIT_FIRST) : STA base : LDA #HI(SPLIT_FIRST) : STA base+1
 .periods
-    LDX k : INX : CPX n : BCS last
-    LDA split_lines,X : SEC : SBC split_lines-1,X   ; the lines between
-    STA period : LDA #0 : STA period+1
+    LDX k : CPX n : BCS last
+    LDA split_lines,X : SEC : SBC line : STA period  ; the lines since
+    LDA split_lines,X : STA line
+    LDA #0 : STA period+1
     LDX #6
 .times64
     ASL period : ROL period+1
     DEX : BNE times64
-    LDA period : SEC : SBC #2 : STA pal_prog,Y : INY  ; (t1_period)
-    LDA period+1 : SBC #0 : STA pal_prog,Y : INY
+    LDA period : CLC : ADC base : STA pal_prog,Y : INY
+    LDA period+1 : ADC base+1 : STA pal_prog,Y : INY
+    LDA #LO(-2) : STA base : LDA #HI(-2) : STA base+1    ; (t1_period's)
     INC k
     JMP periods
     ZA_UNREACHABLE
@@ -465,7 +467,7 @@ PANEL_RP3 = 2                       ; green
 .full
     RTS
 }
-    ASSERT MAX_SPLITS * 2 + 5 + 2 * (MAX_SPLITS + 1) <= PAL_PROG_LEN
+    ASSERT MAX_SPLITS * 2 + 5 + 2 * (MAX_SPLITS + 2) <= PAL_PROG_LEN
 
 \ --- The panel -----------------------------------------------------------
 

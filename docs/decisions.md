@@ -43,9 +43,10 @@ shows in the nearest the line has; lit pixels stay lit.
 The split timing (`SPLIT_ADJ`) is cauldron-beeb's sweep (its decision 4,
 the same geometry and handler), to sweep again here.
 
-The title (the tape's SCREEN$): nine splits, 6705 of its 6802 lit pixels
-in their own colour (2026-10-31). The rest are on lines that show five
-colours.
+The title (the tape's SCREEN$): eight splits, 6705 of its 6802 lit
+pixels in their own colour (2026-10-31). The rest are on lines that show
+five colours. VSync's count reaches the first split wherever it lands
+(`split_count`), so no screen carries a split that changes nothing.
 
 ## 6. Controls (2026-10-31, provisional)
 

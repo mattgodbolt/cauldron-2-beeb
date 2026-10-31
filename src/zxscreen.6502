@@ -32,6 +32,12 @@
     ASL A : ASL A : ASL A : ASL A : ORA zx_tmp
     RTS
 
+\ Unit X's lit bits in our byte (0-3: two pixels each, from the left; the
+\ first two in the cell's left byte, the others in its right): pixel p is
+\ bits 7 - p and 3 - p. LD A,(HL) : AND PIXEL_MASKS[X] (61158) is that
+\ byte AND this.
+.unit_lit   EQUB &CC, &33, &CC, &33
+
 \ The tables (init_zxscreen): by L, our address's low byte (but the line)
 \ and high byte (but the third); by one of our bytes, its lit pixels as
 \ the low nibble of a Spectrum byte.

@@ -15,7 +15,10 @@
 #   make venv     the Python tools' environment (.venv: SkoolKit, Pillow, py65)
 #   make passes   every scenario in tests/scenarios.txt on both machines,
 #                 compared pass by pass (tools/zxpass.py, tools/beepass.mjs,
-#                 tools/passcmp.py); fails if any differs
+#                 tools/passcmp.py); fails if any differs. Then each
+#                 scenario's frames against the original's (tools/framecmp.py)
+#   make timeline where the port's frames go against the original's, wait
+#                 by wait (tools/timecmp.py)
 #   make rooms    every room 0-127 drawn by the viewer build (-D VIEWER=1,
 #                 build/viewer.ssd) against the original's own drawing
 #                 (tools/zxrooms.py): lit pixels, colours by the plan, and
@@ -47,7 +50,7 @@ DEMO     := $(shell grep -qs '^\.z52180' src/game.6502 || echo "-D DEMO_ROOM=1")
 BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short HEAD 2>/dev/null || echo NOGIT)$(shell git diff --quiet HEAD -- . ':(exclude)$(DISC)' 2>/dev/null || echo +)
 
 .DELETE_ON_ERROR:
-.PHONY: all run check disc fetch zx disasm venv clean passes rooms sprites music front
+.PHONY: all run check disc fetch zx disasm venv clean passes rooms sprites music front timeline
 
 all: $(TARGET)
 
@@ -162,7 +165,16 @@ passes: $(TARGET) $(SCENARIOS:%=build/passes/zx_%.json)
 	    node tools/beepass.mjs $$s -o build/passes/bbc_$$s.json; \
 	    python3 tools/passcmp.py build/passes/zx_$$s.json build/passes/bbc_$$s.json || failed="$$failed $$s"; \
 	done; \
+	python3 tools/framecmp.py; \
 	if [ -n "$$failed" ]; then echo "passes: differ:$$failed"; exit 1; fi
+
+# Where the frames go: each scenario's waits for a frame on both machines
+# (tools/zxtimeline.py, tools/timeline.mjs), compared by tools/timecmp.py.
+timeline: $(TARGET) build/c2.z80
+	@for s in $(SCENARIOS); do \
+	    $(PYTHON) tools/zxtimeline.py $$s && node tools/timeline.mjs $$s && \
+	    python3 tools/timecmp.py $$s --show 0 --rows 12 || exit 1; \
+	done
 
 venv:
 	uv venv .venv && uv pip install --python .venv/bin/python skoolkit pillow py65
