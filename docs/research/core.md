@@ -243,7 +243,16 @@ Drawing an object is two steps:
    stream: `DI`, SP into the buffer, `POP HL : RR L : RR H : PUSH HL :
    POP HL` across it, SP restored from 24050, `EI`. Returns B = lines,
    C = width+1. The two bytes before the buffer are zeroed and included
-   in the stream.
+   in the stream. (Correction, 2026-10-31.) The stream is E words, E =
+   ((lines × (width+1)) AND 255) shifted right *signed* (SRA), plus its
+   carry, plus one. A frame of 128 bytes or more (the largest is 192)
+   so runs 256 bytes past its end: the stream for 24225 runs over
+   24427's buffer, and the one for 24427 to about 24875. The carry
+   also runs on from one pass into the next (only the first pass starts
+   with `AND A`), so the bits off the stream's end come back in at the
+   top of the byte before the buffer. Neither reaches the image itself,
+   but both change bytes in the variables: the port does the same
+   (`make sprites` compares 24223-24899).
 2. **57058 XOR to screen**. Slots 0 and 1 (the player and its spell,
    24022) are clipped and colourless (57074/57138): horizontal clipping
    by a skip count (24038) and a limit (24039), vertical by the

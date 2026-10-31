@@ -946,12 +946,3 @@ ENDMACRO
     LDA #0
     RTS
 }
-
-\ ---------------------------------------------------------------------------
-\ PLACEHOLDERS, for the lead to delete on merge: the names this layer uses
-\ that the drawing and data layers define. Each is a guess at nothing
-\ but a name, so a duplicate on merge is loud.
-r_tables = &8000                        ; tools/mkdata.py's GAMEDATA tables (57726-64998)
-xor_erase = ZP_END                      ; non-zero while a XOR erases the old image
-.page_game                              ; GAMEDATA into &8000 (room.6502's)
-    RTS

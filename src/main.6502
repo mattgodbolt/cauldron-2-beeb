@@ -30,12 +30,16 @@ vsync_hook  = ZP_FIXED + 3      ; called at VSync if its high byte isn't 0 (2 by
 unwritten_at = ZP_FIXED + 5     ; the original's address of a stub reached (2 bytes)
 zx_ptr      = ZP_FIXED + 7      ; zxscreen.6502's: our screen address (2 bytes)
 zx_tmp      = ZP_FIXED + 9
-ZP_END      = ZP_FIXED + 10
+game_bank   = ZP_FIXED + 10     ; the sideways banks the loader filled: GAMEDATA
+room_bank   = ZP_FIXED + 11     ; ... and ROOMDATA (room.6502's page_game, page_rooms)
+xor_erase   = ZP_FIXED + 12     ; non-zero: the next 57058 / 57194 erases (draw.6502)
+glyph_ink   = ZP_FIXED + 13     ; the ink 54464 writes in (draw.6502)
+ZP_END      = ZP_FIXED + 14
     ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
 
 SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF
     EQUS "*| CAULDRON II ", build_stamp, 13
-    EQUS "*RUN C2", 13
+    EQUS "*RUN LOADER", 13
 ENDSECTION
 
 SECTION Title, org = screen, load = &FFFF0000 OR screen, exec = &FFFF0000 OR screen, filename = "TITLE"
@@ -43,8 +47,90 @@ SECTION Title, org = screen, load = &FFFF0000 OR screen, exec = &FFFF0000 OR scr
     ASSERT P% = &8000
 ENDSECTION
 
-LD_SRC = &80                        ; (the loader's zero page: the game's isn't set up)
+LD_SRC = &80                        ; (the loaders' zero page: the game's isn't set up)
 LD_DST = &82
+
+\ The original's data (tools/mkdata.py, build/data) in two sideways RAM
+\ banks (decision 9): GAMEDATA, the sprites and the tables, paged in all
+\ the time; ROOMDATA, the rooms' tiles, blocks, layouts and attributes
+\ and their colour plans, paged in while a room draws. LOADER stages each
+\ file at DATA_LOAD and copies it to a free bank.
+DATA_LOAD = &1900
+SECTION GameData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "GAMEDAT", guard = &C000
+    INCLUDE "../build/data/gamedata.6502"
+.gamedata_end
+    PRINT "GAMEDATA &8000-&", ~gamedata_end, " (", &C000 - gamedata_end, " bytes free)"
+    ASSERT DATA_LOAD + gamedata_end - &8000 <= LOADER_ORG
+ENDSECTION
+SECTION RoomData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "ROOMDAT", guard = &C000
+    INCLUDE "../build/data/roomdata.6502"
+.roomdata_end
+    PRINT "ROOMDATA &8000-&", ~roomdata_end, " (", &C000 - roomdata_end, " bytes free)"
+    ASSERT DATA_LOAD + roomdata_end - &8000 <= LOADER_ORG
+ENDSECTION
+
+\ LOADER: !BOOT runs it first, high in memory (below MODE 7's screen). It
+\ stages GAMEDAT and ROOMDAT at DATA_LOAD, copies each to a sideways RAM
+\ bank, leaves their numbers in game_bank and room_bank, and runs C2.
+LOADER_ORG = &7000
+SECTION Banks, org = LOADER_ORG, load = &FFFF0000 OR LOADER_ORG, exec = &FFFF0000 OR LOADER_ORG, filename = "LOADER"
+    LDA #&FF : STA game_bank        ; (no bank yet)
+    LDX #LO(load_game) : LDY #HI(load_game)
+    LDA #HI(gamedata_end - 1) + 1 : JSR load_bank
+    STX game_bank
+    LDX #LO(load_rooms) : LDY #HI(load_rooms)
+    LDA #HI(roomdata_end - 1) + 1 : JSR load_bank
+    STX room_bank
+    LDA game_bank : STA romshad : STA romsel
+    LDX #LO(run_game) : LDY #HI(run_game) : JMP oscli
+.run_game   EQUS "RUN C2", 13
+\ *LOAD the file whose command is at X, Y, and copy it from DATA_LOAD to
+\ the highest free sideways RAM bank (no ROM found there at start-up, a
+\ byte at &8000 can be flipped, and not game_bank), up to the page A.
+\ O: X = the bank. Without one, say so and stop.
+.load_bank
+{
+    STA ld_end
+    JSR oscli
+    SEI
+    LDX #15
+.free
+    LDA romtypes,X : BNE not_free
+    CPX game_bank : BEQ not_free
+    STX romsel
+    LDA &8000 : EOR #&FF : STA &8000
+    CMP &8000 : BEQ found
+.not_free
+    DEX : BPL free
+    LDA romshad : STA romsel
+    CLI
+    LDX #0
+.say
+    LDA no_ram,X : JSR osasci
+    INX : CPX #no_ram_end - no_ram : BNE say
+.stop
+    JMP stop
+.found
+    STX romshad
+    LDA #HI(DATA_LOAD) : STA LD_SRC+1 : LDA #&80 : STA LD_DST+1
+    ASSERT LO(DATA_LOAD) = 0
+    LDY #0 : STY LD_SRC : STY LD_DST
+.copy
+    LDA (LD_SRC),Y : STA (LD_DST),Y
+    INY : BNE copy
+    INC LD_SRC+1 : INC LD_DST+1
+    LDA LD_DST+1 : CMP ld_end : BNE copy
+    CLI
+    RTS
+}
+ld_end = LD_DST + 2
+.load_game  EQUS "LOAD GAMEDAT", 13         ; (at its own address, DATA_LOAD)
+.load_rooms EQUS "LOAD ROOMDAT", 13
+.no_ram     EQUS "Cauldron II needs 32K of sideways RAM", 13
+.no_ram_end
+.banks_end
+    ASSERT banks_end <= &7C00
+ENDSECTION
 
 \ C2: the game, assembled to run from &0E00 (the DFS's workspace, free
 \ once the game owns the machine), loaded at &1900 with the loader after
@@ -60,13 +146,29 @@ SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filena
     ZA_ENTRY
     LDX #&FF : TXS
     JSR init_system
+    \ GAMEDATA (LOADER's bank), which the OS paged out for its own ROMs.
+    LDA game_bank : STA romshad : STA romsel
     JSR init_zxscreen
+    JSR init_draw
+    JSR plain_colours
+IF DEFINED(VIEWER)
+    LDA #0 : STA view_game : STA view_num
+ENDIF
     LDA #LO(title_palette) : LDY #HI(title_palette) : JSR set_palette
     JSR screen_on
 }
 .shown                              ; (global: the tools run to here)
     JSR any_key : BEQ shown
+IF DEFINED(VIEWER)
+    LDA view_game : BNE game        ; (a tool may poke it: the game, not the viewer)
+    JMP viewer                      ; (room.6502: the drawing's checks)
+.game
+    JMP z52180
+ELIF DEFINED(DEMO_ROOM)
+    JMP demo                        ; (room.6502: until game.6502 has 52180)
+ELSE
     JMP z52180                      ; the original's entry (game.6502)
+ENDIF
 
 \ A transcribed routine called one not yet written (build/stubs.6502):
 \ stop, with the original's address in unwritten_at for the tools.
@@ -89,6 +191,7 @@ SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filena
     INCLUDE "frontend.6502"
     INCLUDE "sound.6502"
     INCLUDE "../build/data/title.6502"
+    INCLUDE "../build/data/font.6502"   ; (r_font: the font, in main RAM)
     INCLUDE "../build/stubs.6502"
 .code_end
     ENDSECTION
@@ -145,11 +248,33 @@ SECTION Work, org = code_end, guard = screen, virtual = TRUE
 .frame_ula      SKIP 16         ; the palette VSync writes (irq.6502)
 .split_ula      SKIP 4 * MAX_SPLITS ; each split's four writes
 .split_latch    SKIP 2 * (MAX_SPLITS + 1)   ; T1's periods
+.rp1            SKIP SCREEN_ROWS ; each row's logical 1-3 colours (room.6502)
+.rp2            SKIP SCREEN_ROWS
+.rp3            SKIP SCREEN_ROWS
+PAL_PROG_LEN = 1 + 4 + 2 * MAX_SPLITS + 2 * (MAX_SPLITS + 1)
+.pal_prog       SKIP PAL_PROG_LEN ; the screen's palette program (make_program)
+.split_lines    SKIP MAX_SPLITS ; ... its splits' lines
+.pat_q          SKIP 4          ; make_patterns' row: logical 1-3 at +1
+.bank_list      SKIP BANK_LIST_MAX  ; the room's tile-bank list (62954), copied
+IF DEFINED(VIEWER)
+.view_num       SKIP 1          ; the viewer's room (tools/roomcheck.mjs sets it)
+.view_shown     SKIP 1          ; ... and the one drawn
+.view_game      SKIP 1          ; non-zero: a key starts the game instead
+TEST_CALLS = 16
+.test_n         SKIP 1          ; the sprite calls to make (tools/spritecheck.mjs)
+.test_calls     SKIP 6 * TEST_CALLS
+ENDIF
     ALIGN &100
 .zx_lo          SKIP 256        ; zxscreen.6502's tables
 .zx_hi          SKIP 256
 .lit_hi         SKIP 256
 .lit_lo         SKIP 256
+.spread_hi      SKIP 256        ; draw.6502's
+.spread_lo      SKIP 256
+.litmask        SKIP 256
+.pat_even       SKIP 256        ; the rows' ink patterns (room.6502's make_patterns)
+.pat_odd        SKIP 256
+.scen_ink       SKIP 768        ; each cell's scenery ink (draw.6502)
 .work_end
     PRINT "code &0E00-&", ~code_end, ", workspace to &", ~work_end, " (", screen - work_end, " bytes free)"
 ENDSECTION

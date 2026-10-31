@@ -16,6 +16,12 @@
 #   make passes   every scenario in tests/scenarios.txt on both machines,
 #                 compared pass by pass (tools/zxpass.py, tools/beepass.mjs,
 #                 tools/passcmp.py); fails if any differs
+#   make rooms    every room 0-127 drawn by the viewer build (-D VIEWER=1,
+#                 build/viewer.ssd) against the original's own drawing
+#                 (tools/zxrooms.py): lit pixels, colours by the plan, and
+#                 attributes; build/bbcrooms/contact.png
+#   make sprites  random calls of 57194 and 57058 on both machines
+#                 (tools/spritecases.py, tools/spritecheck.mjs)
 
 PYTHON  ?= .venv/bin/python
 BARON   ?= $(firstword $(wildcard ../baron/build/src/baron) baron)
@@ -28,20 +34,37 @@ TARGET   = build/cauldron2.ssd
 DISC     = cauldron2.ssd
 SOURCES  = $(wildcard src/*.6502)
 # Made from the original by the tools, never committed.
-GENERATED = build/data/title.bin
+DATA      = build/data/gamedata.6502 build/data/roomdata.6502 build/data/font.6502
+GENERATED = build/data/title.bin $(DATA)
+VIEWER    = build/viewer.ssd
+# Until game.6502 has the original's entry, the disc shows a room (room.6502's demo).
+DEMO     := $(shell grep -qs '^\.z52180' src/game.6502 || echo "-D DEMO_ROOM=1")
 # Stamped into !BOOT, so a disc says what it is: UTC build time and the
 # commit, with + if the tree had changes.
 BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short HEAD 2>/dev/null || echo NOGIT)$(shell git diff --quiet HEAD -- . ':(exclude)$(DISC)' 2>/dev/null || echo +)
 
 .DELETE_ON_ERROR:
-.PHONY: all run check disc fetch zx disasm venv clean passes
+.PHONY: all run check disc fetch zx disasm venv clean passes rooms sprites
 
 all: $(TARGET)
 
 $(TARGET): $(SOURCES) $(GENERATED) tools/mksyms.py | build
 	@python3 tools/lint_labels.py > /dev/null || python3 tools/lint_labels.py
 	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
-	$(ASM) -D 'BUILD="$(BUILD)"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) -v -log0 build/listing.txt src/main.6502
+	$(ASM) -D 'BUILD="$(BUILD)"' $(DEMO) -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) -v -log0 build/listing.txt src/main.6502
+
+# The viewer: the same game, but a key after the title goes to the viewer
+# (room.6502), which draws the rooms for the checks. Its own symbols.
+$(VIEWER): $(SOURCES) $(GENERATED) tools/mksyms.py | build
+	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	$(ASM) -D 'BUILD="$(BUILD)"' -D VIEWER=1 -o $@ --title VIEWER --opt 3 --warn 2 --symbols $(@:.ssd=.json) -log0 build/viewer.txt src/main.6502
+
+# The oracle: every room drawn by the original's own code.
+build/zxrooms/room_127.scr: build/c2.z80 tools/zxrooms.py tools/zx.py
+	$(PYTHON) tools/zxrooms.py
+
+$(DATA) &: build/c2.z80 build/zxrooms/room_127.scr tools/mkdata.py tools/colours.py tools/mksyms.py
+	$(PYTHON) tools/mkdata.py
 
 build/data/title.scr: original/CauldronII.tap tools/tapblock.py
 	@mkdir -p build/data
@@ -51,7 +74,16 @@ build/data/title.scr: original/CauldronII.tap tools/tapblock.py
 build/data/title.bin: build/data/title.scr tools/mkscreen.py
 	python3 tools/mkscreen.py $< $@ --png $(@:.bin=.png)
 
-check: $(TARGET)
+check: $(TARGET) rooms sprites
+
+rooms: $(VIEWER) build/zxrooms/room_127.scr
+	node tools/roomcheck.mjs
+	$(PYTHON) tools/roomcmp.py
+
+sprites: $(VIEWER) build/zxrooms/room_127.scr
+	$(PYTHON) tools/spritecases.py make
+	node tools/spritecheck.mjs
+	$(PYTHON) tools/spritecases.py cmp
 
 # Always from a clean tree, so the stamp names the commit the disc holds.
 disc:

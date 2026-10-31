@@ -1,3 +1,632 @@
 \ ***************************************************************************
-\ Drawing: sprites (pre-shift and XOR, 57058-57415), text (54363, 54464), the panel (53550, 53823, 57568, 57616), CLS and line clearing.
+\ Drawing: sprites (pre-shift and XOR, 57058-57415), text (54363, 54464),
+\ CLS and line clearing (53087, 53931), the screen and attribute address
+\ helpers (57307, 57326, 57341).
+\
+\ The screen keeps exactly the original's lit pixels; their colour is the
+\ port's (decisions 5 and 10). Each character row r has a pattern pair for
+\ each Spectrum ink k (make_patterns, room.6502): pat_even and pat_odd at
+\ k * 32 + r, a MODE 1 byte of four pixels' logical colours for the
+\ row's even and odd lines, solid or an ordered dither. A lit pixel's
+\ colour is its ink's pattern ANDed with the pixel:
+\
+\ - scenery (54464, LD to the screen): the cell's ink (glyph_ink), which
+\   scen_ink keeps per cell, as the attribute file had it before any
+\   sprite XORed colour into it;
+\ - a sprite's XOR (xor_zx): a pixel the XOR lights takes spr_ink, the
+\   sprite's colour, or with spr_ink negative the cell's scen_ink; a lit
+\   pixel the XOR leaves lit keeps its colour; one it clears is black.
+\
+\ A sprite drawn (xor_erase 0) is in its own colour (sprite_ink): the
+\ colour the original shows its frame in over the room's empty cells
+\ (attribute 70: its frame attribute EOR 70); a frame without one
+\ (60422 = 0) the pumpkin's yellow in slot 0, else its cell's scenery
+\ ink, as the original shows it. A sprite erased (xor_erase non-zero:
+\ the mover's XOR of the old image) relights the scenery under it in the
+\ scenery's colour. xor_erase applies to one call of 57058 or 57194 and
+\ is clear again after it.
 \ ***************************************************************************
+
+\ The spread tables and the lit-pixel mask: a Spectrum byte's left four
+\ pixels as a MODE 1 byte, all of each lit pixel's bits set (spread_hi),
+\ its right four (spread_lo); a MODE 1 byte's lit pixels the same way
+\ (litmask). After init_zxscreen (lit_lo, lit_hi).
+.init_draw
+{
+    LDX #0
+.each
+    TXA : AND #&F0 : STA spread_hi,X
+    TXA : LSR A : LSR A : LSR A : LSR A : ORA spread_hi,X : STA spread_hi,X
+    TXA : AND #&0F : STA spread_lo,X
+    ASL A : ASL A : ASL A : ASL A : ORA spread_lo,X : STA spread_lo,X
+    LDA lit_lo,X : ORA lit_hi,X : STA litmask,X
+    INX : BNE each
+    STX xor_erase                   ; (0)
+    RTS
+}
+
+\ --- One Spectrum byte ---------------------------------------------------
+
+ZA_AUTO1 spr_ink                ; the sprite's colour, a Spectrum ink; negative: the cell's
+ZA_AUTO1 pat                    ; the pattern of the byte being written
+
+\ Our address of the Spectrum screen byte X (low), Y (high) into zx_ptr,
+\ and the pattern of ink A for its row and line into pat. Y kept.
+.zx_cell
+{
+    ZA_AUTO1 idx
+    ASL A : ASL A : ASL A : ASL A : ASL A : STA idx     ; ink * 32
+    TYA : AND #7 : ORA zx_lo,X : STA zx_ptr
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA zx_ptr+1 ; (C clear: AND #&18, ASL)
+    TXA : LSR A : LSR A : LSR A : LSR A : LSR A : ORA idx : STA idx
+    TYA : AND #&18 : ORA idx : TAX                      ; + the character row
+    TYA : LSR A : BCS odd
+    LDA pat_even,X : STA pat
+    RTS
+.odd
+    LDA pat_odd,X : STA pat
+    RTS
+}
+
+\ A = the scenery ink of the cell of Spectrum screen byte X (low), Y
+\ (high). X and Y kept.
+.scen_ink_at
+{
+    ZA_AUTO2 p
+    STX p
+    TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA p+1
+    STY scen_y
+    LDY #0 : LDA (p),Y
+    LDY scen_y
+    RTS
+}
+ZA_AUTO1 scen_y
+
+\ XOR the Spectrum byte A onto the Spectrum screen at X (low), Y (high),
+\ coloured as the head of the file says (spr_ink). An address in the
+\ attribute file XORs the attribute, as the original's would. A, X, Y
+\ changed.
+.xor_zx
+{
+    ZA_AUTO1 bits
+    ZA_AUTO1 sb
+    ZA_AUTO1 stay
+    STA bits
+    CPY #&58 : BCS attr
+    LDA spr_ink : BPL own
+    JSR scen_ink_at
+.own
+    JSR zx_cell
+    LDY #0
+    LDX bits : LDA spread_hi,X : JSR half
+    LDY #8
+    LDX bits : LDA spread_lo,X
+.half
+    BEQ none                        ; (nothing to XOR in this half)
+    STA sb
+    EOR #&FF : AND (zx_ptr),Y : STA stay         ; lit, and the XOR leaves it lit
+    LDA (zx_ptr),Y : TAX
+    LDA litmask,X : EOR #&FF : AND sb : AND pat  ; unlit, and the XOR lights it
+    ORA stay : STA (zx_ptr),Y
+.none
+    RTS
+.attr
+    CPY #&5B : BCS none             ; (past the attributes: not the port's)
+    STX zx_ptr
+    TYA : CLC : ADC #ATTR_HI : STA zx_ptr+1
+    LDY #0 : LDA (zx_ptr),Y : EOR bits : STA (zx_ptr),Y
+    RTS
+}
+
+\ Write the Spectrum byte A to the Spectrum screen at X (low), Y (high),
+\ as LD (HL),A does, in ink glyph_ink, which becomes the cell's scenery
+\ ink. A, X, Y changed.
+.put_zx
+{
+    ZA_AUTO1 bits
+    ZA_AUTO2 p
+    STA bits
+    CPY #&58 : BCS attr
+    STX p                           ; the cell's scenery ink
+    TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA p+1
+    STY scen_y
+    LDY #0 : LDA glyph_ink : STA (p),Y
+    LDY scen_y
+    LDA glyph_ink : JSR zx_cell
+    LDY #0
+    LDX bits : LDA spread_hi,X : AND pat : STA (zx_ptr),Y
+    LDY #8
+    LDA spread_lo,X : AND pat : STA (zx_ptr),Y
+    RTS
+.attr
+    CPY #&5B : BCS none             ; (past the attributes: not the port's)
+    STX zx_ptr
+    TYA : CLC : ADC #ATTR_HI : STA zx_ptr+1
+    LDY #0 : LDA bits : STA (zx_ptr),Y
+.none
+    RTS
+}
+
+\ spr_ink for frame A (decision 10): the scenery's when erasing, else the
+\ frame's colour over an empty cell, else (no colour) the pumpkin's
+\ yellow when X = 0 (slot 0), else the scenery's. A kept.
+.sprite_ink
+{
+    PHA
+    LDY xor_erase : BNE scenery
+    TAY : LDA a60422,Y : BEQ none
+    EOR #70 : AND #7 : STA spr_ink
+    PLA
+    RTS
+.none
+    TXA : BNE scenery
+    LDA #6 : STA spr_ink
+    PLA
+    RTS
+.scenery
+    LDA #&FF : STA spr_ink
+    PLA
+    RTS
+}
+
+\ --- Sprites -------------------------------------------------------------
+
+\ 57058, DrawObject: XOR the pre-shifted image at HL (B lines of C bytes)
+\ for frame A at D = y, E = x. Slots 0 and 1 (24022) clipped and
+\ colourless (57074), the others through 57182.
+.z57058
+    PHA
+    LDA a24022 : BEQ z57074
+    CMP #1 : BEQ z57074
+    PLA
+    JMP z57182
+
+\ The clipped draw: at the sides by a skip count (24038) and a limit
+\ (24039), above and below by the line table 58931, whose lines off the
+\ play area all point at a sink (24995: the BBC's address, below the
+\ screen, so a byte there is plain memory). O: B = 0; HL = the line
+\ table's entry after the last line; A, C, DE, IX kept.
+.z57074
+{
+    ZA_AUTO2 img
+    ZA_AUTO2 line
+    ZA_AUTO1 col
+    ZA_AUTO1 skip
+    ZA_AUTO1 lim
+    ZA_AUTO1 n
+    ZA_AUTO1 frame
+    PLA : STA frame
+    LDX a24022 : JSR sprite_ink
+    LDA rl : STA img : LDA rh : STA img+1       ; (the original pops HL into IX)
+    LDA #0 : STA a24038
+    ORA #128 : STA a24039
+    LDA re : LSR A : LSR A
+    SEC : SBC #3 : BCS right                    ; (Z80 SUB 3, NC)
+    EOR #&FF : CLC : ADC #1 : STA a24038         ; the bytes off the left
+    LDA #0
+    JMP got
+    ZA_UNREACHABLE
+.right
+    PHA
+    CLC : ADC rc : SEC : SBC #32 : BCC on        ; (Z80 C: it ends on the screen)
+    STA n
+    LDA rc : SEC : SBC n : STA a24039            ; the bytes up to the right edge
+.on
+    PLA
+.got
+    AND #31 : STA col
+    \ HL = 58931 + 2 * y.
+    LDA rd : ASL A : STA rl
+    LDA #0 : ROL A : STA rh
+    LDA rl : CLC : ADC #LO(a58931) : STA rl
+    LDA rh : ADC #HI(a58931) : STA rh
+    LDA rb : STA n
+.each_line
+    LDY #0 : LDA (rl),Y : CLC : ADC col : STA line
+    INY : LDA (rl),Y : ADC #0 : STA line+1
+    LDA a24038 : STA skip
+    LDA a24039 : STA lim
+    LDX rc
+.byte
+    DEC skip : BPL next             ; (Z80 DEC E : JP P: still skipping)
+    DEC lim : BMI next              ; (DEC D : JP M: past the limit)
+    TXA : PHA
+    LDY #0 : LDA (img),Y
+    LDY line+1 : CPY #&40 : BCS on_screen
+    LDY #0 : EOR (line),Y : STA (line),Y         ; the sink
+    JMP inc
+    ZA_UNREACHABLE
+.on_screen
+    LDX line : JSR xor_zx
+.inc
+    INC line : BNE inced : INC line+1
+.inced
+    PLA : TAX
+.next
+    INC img : BNE imged : INC img+1
+.imged
+    DEX : BNE byte
+    LDA rl : CLC : ADC #2 : STA rl
+    BCC same : INC rh
+.same
+    DEC n : BNE each_line
+    LDA #0 : STA rb : STA xor_erase
+    LDA frame
+    RTS
+}
+
+\ 57182: E - 12, then 57194.
+.z57182
+{
+    PHA
+    LDA re : PHA
+    SEC : SBC #12 : STA re
+    TSX : LDA &0102,X                            ; (A, under E on the stack)
+    JSR z57194
+    PLA : STA re
+    PLA
+    RTS
+}
+
+\ 57194, DrawSpriteAttr: XOR the image at HL (B lines of C bytes) at
+\ D = y, E / 4 = the byte column, unclipped, down the Spectrum's lines as
+\ its screen addresses go; then frame A's attribute (60422, if not 0)
+\ XORed onto C cells by B / 8 rounded up rows from the top line's cell.
+\ Every register kept.
+.z57194
+{
+    ZA_AUTO2 src
+    ZA_AUTO2 scr                    ; the line's first byte (the Spectrum's address)
+    ZA_AUTO2 at                     ; the byte being XORed
+    ZA_AUTO2 top                    ; the top line's first byte
+    ZA_AUTO1 lines
+    ZA_AUTO1 n
+    ZA_AUTO1 frame
+    STA frame
+    LDX #1 : JSR sprite_ink         ; (X = 1: not the pumpkin's slot)
+    LDA rl : STA src : LDA rh : STA src+1
+    LDA rd : JSR line_addr          ; X, Y = the line's column 0
+    STX scr
+    LDA re : LSR A : LSR A : AND #31
+    CLC : ADC scr : STA scr : STA top
+    TYA : ADC #0 : STA scr+1 : STA top+1
+    LDA rb : STA lines
+.each_line
+    LDA scr : STA at : LDA scr+1 : STA at+1
+    LDA rc : STA n
+.byte
+    LDY #0 : LDA (src),Y
+    LDX at : LDY at+1 : JSR xor_zx
+    INC at : BNE inced : INC at+1
+.inced
+    INC src : BNE srced : INC src+1
+.srced
+    DEC n : BNE byte
+    \ The next line: INC H; past a character row, L + 32, and H back a
+    \ third unless that carried.
+    INC scr+1
+    LDA scr+1 : AND #7 : BNE stepped
+    LDA scr : CLC : ADC #32 : STA scr
+    BCS stepped
+    LDA scr+1 : SEC : SBC #8 : STA scr+1
+.stepped
+    DEC lines : BNE each_line
+    \ The colour: 88 + the third, and the top line's low byte.
+    LDY frame : LDA a60422,Y : BEQ done
+    STA n
+    LDA top+1 : LSR A : LSR A : LSR A : AND #7 : ORA #88 : STA at+1
+    LDA top : STA at
+    LDA rb : LSR A : LSR A : LSR A : STA lines
+    LDA rb : AND #7 : BEQ rows
+    INC lines
+.rows
+    LDA lines : BEQ done            ; (no lines: none; the original's DJNZ isn't met with 0)
+.each_row
+    LDA at : STA scr : LDA at+1 : STA scr+1
+    LDX rc
+.cell
+    LDY scr+1 : CPY #&5B : BCS skip  ; (past the attributes: not the port's)
+    TYA : CLC : ADC #ATTR_HI : STA src+1
+    LDA scr : STA src
+    LDY #0 : LDA (src),Y : EOR n : STA (src),Y
+.skip
+    INC scr : BNE celled : INC scr+1
+.celled
+    DEX : BNE cell
+    LDA at : CLC : ADC #32 : STA at
+    BCC rowed : INC at+1
+.rowed
+    DEC lines : BNE each_row
+.done
+    LDA #0 : STA xor_erase
+    LDA frame
+    RTS
+}
+
+\ X (low), Y (high) = the Spectrum screen address of line A's column 0,
+\ from the character-row table 58883, as 57307 makes it. A kept.
+.line_addr
+{
+    ZA_AUTO1 hi
+    PHA
+    LSR A : LSR A : LSR A : ASL A : TAY
+    LDA a58883,Y : TAX
+    LDA a58883+1,Y : STA hi
+    PLA : PHA
+    AND #7 : CLC : ADC hi : TAY
+    PLA
+    RTS
+}
+
+\ 57307, LineAddr: HL = the screen address of line A. A kept.
+.z57307
+    JSR line_addr
+    STX rl : STY rh
+    RTS
+
+\ 57326, AttrUnder: A = the attribute under screen address HL; DE = its
+\ address (the original's: its high byte + ATTR_HI is ours).
+.z57326
+{
+    ZA_AUTO2 p
+    LDA rh : LSR A : LSR A : LSR A : AND #7 : ORA #88 : STA rd
+    LDA rl : STA re : STA p
+    LDA rd : CLC : ADC #ATTR_HI : STA p+1
+    LDY #0 : LDA (p),Y
+    RTS
+}
+
+\ 57341, AttrAddr: HL = DE + the cell offset of screen address HL (its
+\ third * 256 + its low byte). A kept.
+.z57341
+{
+    PHA
+    LDA rh : LSR A : LSR A : LSR A : AND #7 : STA rh
+    LDA rl : CLC : ADC re : STA rl
+    LDA rh : ADC rd : STA rh
+    PLA
+    RTS
+}
+
+\ 57415, PreShift: frame A's image into the buffer at HL, each line
+\ followed by a zero byte, shifted right by 2 * (E - 12) AND 7 pixels as
+\ one bit stream from HL - 2 (the two bytes before it zeroed). The
+\ original runs the stream through the stack (POP HL : RR L : RR H : PUSH
+\ HL), a word at a time, over (B * (C + 1)) AND 255, halved signed,
+\ rounded up, plus one, words: here the same bytes, the same count, and
+\ the carry running on from one pass into the next as there. O: B = the
+\ lines, C = the width + 1; A, DE, HL kept.
+.z57415
+{
+    ZA_AUTO2 p
+    ZA_AUTO2 gfx
+    ZA_AUTO1 w
+    ZA_AUTO1 h
+    ZA_AUTO1 words
+    ZA_AUTO1 passes
+    ZA_AUTO1 frame
+    STA frame
+    \ The two bytes before the buffer, and 24052 = HL - 2.
+    LDA rl : SEC : SBC #2 : STA p : STA a24052
+    LDA rh : SBC #0 : STA p+1 : STA a24052+1
+    LDA #0 : TAY : STA (p),Y : INY : STA (p),Y
+    \ The frame's width, height and graphics: 59798 + 4A.
+    LDA frame : STA p : LDA #0 : STA p+1
+    ASL p : ROL p+1 : ASL p : ROL p+1
+    LDA p : CLC : ADC #LO(a59798) : STA p
+    LDA p+1 : ADC #HI(a59798) : STA p+1
+    LDY #0 : LDA (p),Y : STA w
+    INY : LDA (p),Y : STA h
+    INY : LDA (p),Y : STA gfx
+    INY : LDA (p),Y : STA gfx+1
+    \ Each line's w bytes, then a zero.
+    LDA rl : STA p : LDA rh : STA p+1
+    LDX h : BEQ copied              ; (frame 154, 0 x 0: nothing)
+.copy_line
+    LDY #0
+    LDA w : BEQ zero
+.copy
+    LDA (gfx),Y : STA (p),Y
+    INY : CPY w : BNE copy
+.zero
+    LDA #0 : STA (p),Y
+    INY
+    TYA : CLC : ADC p : STA p
+    BCC c1 : INC p+1
+.c1
+    LDA gfx : CLC : ADC w : STA gfx
+    BCC c2 : INC gfx+1
+.c2
+    DEX : BNE copy_line
+.copied
+    LDA h : STA rb
+    LDA w : STA rc
+    \ The shift: 2 * (x - 12) AND 7 pixels, a pass a pixel.
+    LDA re : SEC : SBC #12 : ASL A : AND #7 : BEQ done
+    STA passes
+    \ The words: (h * (w + 1)) AND 255, SRA, + its carry, + 1 (0 is 256).
+    LDA #0 : LDX w : INX
+.mul
+    CLC : ADC h
+    DEX : BNE mul
+    CMP #&80 : ROR A                ; (SRA)
+    ADC #1                          ; (+ the carry it shifted out, + 1)
+    STA words
+    CLC                             ; (the original's AND A: the first pass only)
+.pass
+    LDA a24052 : STA p : LDA a24052+1 : STA p+1
+    LDY #0
+    LDX words
+.word
+    LDA (p),Y : ROR A : STA (p),Y   ; RR L
+    INY
+    LDA (p),Y : ROR A : STA (p),Y   ; RR H
+    INY : BNE same
+    INC p+1
+.same
+    DEX : BNE word
+    DEC passes : BNE pass
+.done
+    INC rc
+    LDA frame
+    RTS
+}
+
+\ --- Text and scenery ----------------------------------------------------
+
+\ 54464, DrawChar: glyph A of the font at DE (8 bytes from DE + 8A) at
+\ character row B, column C, written (not XORed), in ink glyph_ink (the
+\ port's: the original's colour is the attribute its callers write).
+\ O: HL = the screen address of its top line; A, BC, DE kept. The
+\ address is the character-row table 58883's made by arithmetic, so that
+\ it needs no GAMEDATA: the room drawing calls this with ROOMDATA paged in.
+.z54464
+{
+    ZA_AUTO2 src
+    ZA_AUTO1 n
+    ZA_AUTO1 glyph
+    STA glyph
+    STA src : LDA #0 : STA src+1
+    ASL src : ROL src+1 : ASL src : ROL src+1 : ASL src : ROL src+1
+    LDA src : CLC : ADC re : STA src
+    LDA src+1 : ADC rd : STA src+1
+    \ HL = row B's address (&4000 + (B AND &18) * 256 + (B AND 7) * 32) + C.
+    LDA rb : AND #7 : ASL A : ASL A : ASL A : ASL A : ASL A
+    CLC : ADC rc : STA rl
+    LDA rb : AND #&18 : ORA #&40 : ADC #0 : STA rh
+    LDA #0 : STA n
+.each_line
+    LDA rh : CLC : ADC n : TAY      ; (INC H a line)
+    LDX rl
+    STY src_y
+    LDY n : LDA (src),Y
+    LDY src_y
+    JSR put_zx
+    INC n : LDA n : CMP #8 : BNE each_line
+    LDA glyph
+    RTS
+}
+ZA_AUTO1 src_y
+
+\ 54363, PrintString: the string at HL from character row B, column C.
+\ '$' ends it; 13 starts the next row at the first column; 128 + n sets
+\ the attribute n (24024) for what follows; '0'-'9' and 'A'-'Z' are glyphs
+\ 0-35, others go through 57817 to 57844 (or are their own glyph number
+\ if not there). Each glyph is written (54464) in the attribute's ink and
+\ its attribute set. O: HL at the '$'; BC kept.
+.z54363
+{
+    ZA_AUTO2 str
+    ZA_AUTO1 col0
+    LDA rl : STA str : LDA rh : STA str+1
+    LDA rc : STA col0
+.next
+    LDY #0 : LDA (str),Y
+    CMP #'$' : BEQ end
+    CMP #13 : BNE not_cr
+    INC rb : LDA col0 : STA rc
+    JMP advance
+    ZA_UNREACHABLE
+.not_cr
+    CMP #128 : BCC not_attr
+    AND #127 : STA a24024
+    JMP advance
+    ZA_UNREACHABLE
+.not_attr
+    CMP #'0' : BCC other
+    CMP #'9' + 1 : BCS letter
+    SEC : SBC #'0'
+    JMP glyph
+    ZA_UNREACHABLE
+.letter
+    CMP #'A' : BCC other
+    CMP #'Z' + 1 : BCS other
+    SEC : SBC #'A' - 10
+    JMP glyph
+    ZA_UNREACHABLE
+.other
+    LDX #0
+.find
+    CMP a57817,X : BEQ found
+    INX : CPX #27 : BNE find
+    JMP glyph                       ; (not there: the character is the glyph)
+    ZA_UNREACHABLE
+.found
+    LDA a57844,X
+.glyph
+    TAX
+    LDA a24024 : AND #7 : STA glyph_ink
+    LDA #LO(r_font) : STA re : LDA #HI(r_font) : STA rd
+    TXA : JSR z54464
+    LDA #LO(22528) : STA re : LDA #HI(22528) : STA rd
+    JSR z57341
+    LDA rh : CLC : ADC #ATTR_HI : STA rh
+    LDY #0 : LDA a24024 : STA (rl),Y
+    INC rc
+.advance
+    INC str : BNE adv : INC str+1
+.adv
+    JMP next
+    ZA_UNREACHABLE
+.end
+    LDA str : STA rl : LDA str+1 : STA rh
+    LDA col0 : STA rc
+    LDA #'$'
+    RTS
+}
+
+\ 53087, Cls: the screen and attributes to 0, but the screen's first
+\ byte (16384), which the original's LDDR stops short of. The scenery
+\ inks with them.
+.z53087
+{
+    LDA screen : PHA : LDA screen+8 : PHA
+    JSR cls
+    PLA : STA screen+8 : PLA : STA screen
+    LDA #0 : TAX
+.each
+    STA attrs,X : STA attrs+256,X : STA attrs+512,X
+    STA scen_ink,X : STA scen_ink+256,X : STA scen_ink+512,X
+    INX : BNE each
+    RTS
+}
+
+\ 53931, ClearLines: B pixel lines to 0 from line A. O: A = A + B, B = 0,
+\ HL = the last line's end; C, DE kept.
+.z53931
+{
+    ZA_AUTO1 n
+    ZA_AUTO1 line
+    STA line
+.each_line
+    LDA line : JSR z57307
+    LDA #32 : STA n
+.byte
+    LDX rl : LDY rh : JSR zap_zx
+    INC rl : BNE inced : INC rh
+.inced
+    DEC n : BNE byte
+    INC line
+    DEC rb : BNE each_line
+    LDA line
+    RTS
+}
+
+\ Zero the Spectrum screen byte at X (low), Y (high) (an address in the
+\ attributes zeroes the attribute, as LD (HL),0 would).
+.zap_zx
+{
+    CPY #&58 : BCS attr
+    TYA : AND #7 : ORA zx_lo,X : STA zx_ptr
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA zx_ptr+1
+    LDA #0 : TAY : STA (zx_ptr),Y
+    LDY #8 : STA (zx_ptr),Y
+    RTS
+.attr
+    CPY #&5B : BCS none
+    STX zx_ptr
+    TYA : CLC : ADC #ATTR_HI : STA zx_ptr+1
+    LDA #0 : TAY : STA (zx_ptr),Y
+.none
+    RTS
+}
