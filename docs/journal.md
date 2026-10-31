@@ -283,3 +283,10 @@ How the port got here, in order: what worked and what didn't.
 - The still slot's wait (`wait_us`) measures 7626-7666us here, the
   original's 7608us plus its interrupt when one lands in the loop: as
   it should be.
+
+## 2026-10-31: the three speed branches together
+
+- The XOR, the pre-shift and the interrupt merged: `make passes` gives
+  0.989 of the original's frames over all the scenarios, from idle56's
+  0.938 to idle110's 1.033; idle79 is level. Main RAM's release build
+  now prints 0 bytes free: the next code goes to a sideways bank.
