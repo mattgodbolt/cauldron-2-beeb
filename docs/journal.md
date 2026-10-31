@@ -154,6 +154,6 @@ How the port got here, in order: what worked and what didn't.
 - Not at 1 yet. With the XOR and the shift stubbed out (results then
   differ), idle56 ran at 0.77 of the original's frames but idle79 still
   at 1.00: there the still slots' busy waits set the pace, and our
-  per-object work spills past a VSync where the original's doesn't. The
-  XOR is still several times the Z80's per byte (colour costs a read,
-  masks and a pattern); the pre-shift is now about the Z80's.
+  per-object work spills past a VSync where the original's doesn't. By
+  instruction timings the XOR is still several times the Z80's per byte
+  (colour costs a read, masks and a pattern); the pre-shift about the Z80's.
