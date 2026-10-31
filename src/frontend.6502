@@ -15,15 +15,10 @@
 \ ***************************************************************************
 
 
-\ The original's routines the front end calls, by name: the printer, the
-\ clear, the input. (The front end's test build, FETEST, puts its own in.)
-IF DEFINED(FETEST)
-    fe_print = fe_test_print
-    fe_cls = fe_test_cls
-ELSE
-    fe_print = z54363
-    fe_cls = z53087
-ENDIF
+\ The original's routines the front end calls, by name: the printer and
+\ the clear.
+fe_print = z54363
+fe_cls = z53087
 
 \ Internal key numbers (the System VIA's, as key_down takes them).
 KEY_1 = &30
@@ -34,64 +29,31 @@ KEY_5 = &13
 
 \ ---------------------------------------------------------------------------
 \ The colours (decision 15). The original's front-end text is black paper
-\ and at most three inks a screen: one palette each, and the ink each of
-\ the Spectrum's eight shows as (black, blue, red, magenta, green, cyan,
-\ yellow, white), the nearest the palette has.
-
-\ The menu, the keys and the credits: yellow, cyan and bright red.
-\ Game over and the win: magenta and red. Palette programs as
-\ set_palette takes them, with one split that changes nothing (logical 0
-\ black again): with none, set_palette leaves the User VIA's T1 running
-\ free from the screen before, its splits landing anywhere.
-.fe_palette_menu
-    EQUB 1, PHYS_BLACK, PHYS_RED, PHYS_YELLOW, PHYS_CYAN
-    EQUB 0, PHYS_BLACK
-    EQUW &FFFF, &FFFF
-.fe_palette_end
-    EQUB 1, PHYS_BLACK, PHYS_RED, PHYS_MAGENTA, PHYS_YELLOW
-    EQUB 0, PHYS_BLACK
-    EQUW &FFFF, &FFFF
-.fe_ink_menu
-    EQUB 0, 3, 1, 1, 3, 3, 2, 2
-.fe_ink_end
-    EQUB 0, 2, 1, 2, 3, 3, 3, 3
-    ASSERT fe_ink_end = fe_ink_menu + 8
+\ and at most three inks a screen: logical 1-3 on every row, through the
+\ drawing's colour engine (room.6502's make_patterns and make_program),
+\ so the printer (54363) shows each ink as the nearest or a dither.
+\ The menu, the keys and the credits: red, yellow and cyan. Game over and
+\ the win: red, magenta and yellow.
+.fe_inks_menu   EQUB PHYS_RED, PHYS_YELLOW, PHYS_CYAN
+.fe_inks_end    EQUB PHYS_RED, PHYS_MAGENTA, PHYS_YELLOW
 
 .fe_colours_menu
-    LDX #0
-    LDA #LO(fe_palette_menu) : LDY #HI(fe_palette_menu)
-    JMP fe_colours
+    LDY #fe_inks_menu - fe_inks_menu
+    EQUB &2C                        ; (BIT abs: skips the LDY)
 .fe_colours_end
-    LDX #8
-    LDA #LO(fe_palette_end) : LDY #HI(fe_palette_end)
-\ The palette program at (A, Y): its logical 1-3 on every row, through
-\ the drawing's colour engine (room.6502's make_patterns and
-\ make_program), so the printer (54363) shows each ink as the nearest or
-\ a dither. (FETEST's printer reads ink_logical, from fe_ink_menu + X.)
+    LDY #fe_inks_end - fe_inks_menu
 .fe_colours
 {
-    ZA_AUTO2 pp
-    STA fe_pp : STY fe_pp+1
-    STA pp : STY pp+1
-IF DEFINED(FETEST)
-    LDY #0
-.ink
-    LDA fe_ink_menu,X : STA ink_logical,Y
-    INX : INY : CPY #8 : BNE ink
-    LDA fe_pp : LDY fe_pp+1
-    JMP set_palette
-ELSE
     LDX #SCREEN_ROWS - 1
 .row
-    LDY #2 : LDA (pp),Y : STA rp1,X
-    INY : LDA (pp),Y : STA rp2,X
-    INY : LDA (pp),Y : STA rp3,X
+    LDA fe_inks_menu,Y : STA rp1,X
+    LDA fe_inks_menu+1,Y : STA rp2,X
+    LDA fe_inks_menu+2,Y : STA rp3,X
     DEX : BPL row
     JSR make_patterns
-    JMP make_program
-ENDIF
+    JSR make_program
+    LDA #LO(pal_prog) : LDY #HI(pal_prog) : JMP set_palette
 }
-.fe_pp      EQUW 0
 
 \ ---------------------------------------------------------------------------
 \ 52481: the menu. Prints it at row 1, column 10 and waits for 1 to 4:
@@ -392,156 +354,3 @@ ENDMACRO
     JMP z52235
 }
 
-\ ---------------------------------------------------------------------------
-\ The front end's test build (tools/fecheck.mjs): its own printer and
-\ clear, as the original's do them, and entries the check jumps to.
-IF DEFINED(FETEST)
-
-\ 54363 as the original: HL the string, B the row, C the column. Each
-\ glyph's lit pixels in ink_logical's colour for the attribute's ink;
-\ the attribute into attrs.
-.fe_test_print
-{
-    LDA rc : STA fe_col0
-.next
-    LDY #0 : LDA (rhl),Y
-    INC rl : BNE got
-    INC rh
-.got
-    CMP #'$' : BNE not_end
-    RTS
-.not_end
-    CMP #13 : BNE not_nl
-    INC rb : LDA fe_col0 : STA rc
-    JMP next
-.not_nl
-    CMP #128 : BCC char
-    AND #127 : STA a24024
-    JMP next
-.char
-    CMP #'0' : BCC other
-    CMP #'9' + 1 : BCS letter
-    SEC : SBC #'0' : JMP glyph
-.letter
-    CMP #'A' : BCC other
-    CMP #'Z' + 1 : BCS other
-    SEC : SBC #'A' - 10 : JMP glyph
-.other
-    LDX #26
-.look
-    CMP a57817,X : BEQ found
-    DEX : BPL look
-    JMP glyph                       ; (its own code)
-.found
-    LDA a57844,X
-.glyph
-    JSR fe_test_glyph
-    INC rc
-    JMP next
-}
-.fe_col0    EQUB 0
-
-\ Glyph A at row rb, column rc, in the colour of a24024's ink.
-.fe_test_glyph
-{
-    \ the glyph's bytes: r_font + 8A
-    STA fe_g : LDA #0 : STA fe_g+1
-    ASL fe_g : ROL fe_g+1 : ASL fe_g : ROL fe_g+1 : ASL fe_g : ROL fe_g+1
-    LDA fe_g : CLC : ADC #LO(r_font) : STA src+1
-    LDA fe_g+1 : ADC #HI(r_font) : STA src+2
-    \ the cell: screen + 512 rb + 16 rc
-    LDA rc : ASL A : ASL A : ASL A : ASL A : STA dst+1 : STA dst2+1
-    LDA rb : ASL A : ADC #HI(screen) : STA dst+2 : STA dst2+2
-    LDA rc : LSR A : LSR A : LSR A : LSR A
-    CLC : ADC dst+2 : STA dst+2 : STA dst2+2
-    LDA dst2+1 : CLC : ADC #8 : STA dst2+1
-    LDA a24024 : AND #7 : TAX
-    LDY ink_logical,X : LDA fe_cbyte,Y : STA fe_lc
-    LDX #7
-.line
-.src
-    LDA &FFFF,X : PHA
-    LSR A : LSR A : LSR A : LSR A : JSR fe_nibble
-.dst
-    STA &FFFF,X
-    PLA : AND #15 : JSR fe_nibble
-.dst2
-    STA &FFFF,X
-    DEX : BPL line
-    \ its attribute
-    LDA rb : LSR A : LSR A : LSR A : CLC : ADC #HI(attrs) : STA atr+2
-    LDA rb : ASL A : ASL A : ASL A : ASL A : ASL A : ORA rc : STA atr+1
-    LDA a24024
-.atr
-    STA &FFFF
-    RTS
-}
-.fe_g       EQUW 0
-.fe_lc      EQUB 0
-
-\ Four pixels (A's low nibble, bit 3 the left) in colour fe_lc's byte.
-.fe_nibble
-    STA fe_g
-    ASL A : ASL A : ASL A : ASL A : ORA fe_g
-    AND fe_lc
-    RTS
-.fe_cbyte
-FOR c = 0..3
-    EQUB cbyte(c)
-NEXT
-
-\ 53087's: the pixels and the attributes clear.
-.fe_test_cls
-{
-    JSR cls
-    LDA #0 : TAX
-.attr
-    STA attrs,X : STA attrs+256,X : STA attrs+512,X
-    INX : BNE attr
-    RTS
-}
-
-\ 57664's dispatch of the tunes, for vsync_hook.
-.fe_test_hook
-{
-    LDA a24002 : BEQ none
-    CMP #1 : BEQ t1
-    CMP #2 : BEQ t3
-    JMP z51413
-.t1
-    JMP z50113
-.t3
-    JMP z51863
-.none
-    RTS
-}
-
-\ The entries: the title's music and the menu, then the credits' first
-\ page as 52290 prints it; game over; the win's screen.
-.fe_test
-{
-    LDX #&FF : TXS
-    LDA #LO(fe_test_hook) : STA vsync_hook
-    LDA #HI(fe_test_hook) : STA vsync_hook+1
-    JSR z50100
-    LDA #1 : STA a24002
-    JSR fe_cls
-    JSR z52481
-    JSR fe_cls
-    LDA a58776 : STA rl : LDA a58776+1 : STA rh
-    LDA a58780+1 : STA rb : LDA a58780 : STA rc
-    JSR fe_print
-}
-.fe_test_idle
-    JMP fe_test_idle
-.fe_test_over
-    LDX #&FF : TXS
-    LDA #LO(fe_test_hook) : STA vsync_hook
-    LDA #HI(fe_test_hook) : STA vsync_hook+1
-    JMP z53101
-.fe_test_win
-    LDX #&FF : TXS
-    LDA #LO(fe_test_hook) : STA vsync_hook
-    LDA #HI(fe_test_hook) : STA vsync_hook+1
-    JMP fe_win_screen
-ENDIF

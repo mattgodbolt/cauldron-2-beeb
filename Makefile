@@ -102,14 +102,8 @@ build/musiccheck.ssd: $(SOURCES) $(GENERATED) tools/mksyms.py | build
 music: build/musiccheck.ssd
 	node tools/musiccheck.mjs
 
-# The front end's test disc: its own printer and clear in place of the
-# drawing's (src/frontend.6502's FETEST).
-build/fetest.ssd: $(SOURCES) $(GENERATED) tools/mksyms.py | build
-	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
-	$(ASM) -D FETEST=1 -D 'BUILD="$(BUILD) fetest"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) src/main.6502
-
 # The menu, the keys, game over and the win (tools/fecheck.mjs).
-front: build/fetest.ssd
+front: $(TARGET)
 	node tools/fecheck.mjs
 
 
