@@ -321,3 +321,19 @@ How the port got here, in order: what worked and what didn't.
   work); the 49 room changes 1013 frames to 492 (the original's 883).
 - The timeline and the profiler skip the tile tables' labels at the top
   of ROOMDATA, which took GAMEDATA's sprite code's time.
+
+## 2026-10-31: the pre-shift by tables (decision 23)
+
+- The pre-shift's byte: the byte >> k from a table and the byte before's
+  low k bits on top, the buffers self-modified operands, in the fused
+  copy and the tails in place; each line's end inline. Its time over
+  idle56 went from 0.42 to 0.36 of the original's.
+- The XOR (57058, 57194) is still 1.7-1.9 times the original's. Pairs
+  of bytes a step, whole runs a call and kept loop steps changed its
+  time by under 1%: the per-pixel colour work (a half's test, its
+  pattern, the unlit table) is most of it. Dropped for the room.
+- 57194's colour rows a pointer each, a third of the time a cell; few
+  frames in the scenarios have a colour, so it hardly shows.
+- `make passes`' frames, main before and after: 14134 to 13876.
+  `make timeline`: 135 frames lost, 2129 gained (main had 136 lost).
+- `tools/sample.mjs` takes a third argument, routines to look inside.

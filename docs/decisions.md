@@ -541,3 +541,29 @@ before, and the music taking T2 ends a pulse on it. The game's state is
 the same pass by pass; what changes is the sound's rhythm where the
 work between pulses got shorter: the sweeps' pitch is the calls' rate.
 For Matt's ear.
+
+## 23. The pre-shift by tables in main RAM, its in-place shift in ROOMDATA (2026-10-31, provisional)
+
+The pre-shift (57415) shifts each byte right by k = 2, 4 or 6 with the
+byte before's low k bits on top. By tables of a byte >> k (256 bytes a
+k), with the buffers as self-modified operands, a byte takes three
+loads and a store. Main RAM had a page free after main's room work
+(decision 22's branch); GAMEDATA none; ROOMDATA 239 bytes.
+
+| | Main RAM | Frames over `make passes` (2026-10-31; zx 15948) |
+|---|---|---|
+| A. No tables (before) | | 15786 (on the tree before decision 22) |
+| B. >> 2, 4 and 6 | 768 | 15602 (the same tree) |
+| **C. >> 4 and 6; >> 2 in code; the in-place shift in ROOMDATA** (chosen) | 512 | 13876 (with decision 22; 14134 without these) |
+
+C's in-place shift reads and writes only main RAM, so it runs from
+ROOMDATA, paged in around it as the room drawing's code is (decision
+21); main RAM keeps a page free. 57194's colour XOR goes a row at a
+time through one pointer, cut where the attribute file ends.
+
+Tried and dropped, for the room: the XOR in ROOMDATA (it reads only
+main RAM) with the clipped draw (57074) into GAMEDATA in its place, and
+there the XOR two bytes a step, a run's character rows in one call and
+its steps kept between sub-runs. With those, the XOR's time over idle56
+was within 1% of the old (3.07 to 3.05 s), and main's tile tables have
+since taken that ROOMDATA. The XOR stays as decision 17 left it.

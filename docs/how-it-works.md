@@ -89,4 +89,6 @@ ROOMDATA in lives there (decision 21): the room's pack unpacked into
 it in for a caller with GAMEDATA in). A layout is read as
 `room_buf + 40 * (room AND ROOM_PACK - 1)`, not at 43750's `aNNNNN`.
 Most of the sprite drawing runs from GAMEDATA itself (decision 17): it
-reads GAMEDATA's tables, so it needs it paged in anyway.
+reads GAMEDATA's tables, so it needs it paged in anyway. The
+pre-shift's in-place shift touches only main RAM, so it runs from
+ROOMDATA, paged in around it (decision 23).
