@@ -29,8 +29,8 @@ ZX_TO_BBC = [0, 4, 1, 5, 2, 6, 3, 7]
 BBC_RGB = [((c & 1) * 255, (c >> 1 & 1) * 255, (c >> 2 & 1) * 255) for c in range(8)]
 ZX_NAMES = ["black", "blue", "red", "magenta", "green", "cyan", "yellow", "white"]
 
-# The interrupt's first split lands before row 1 whatever the screen
-# (SPLIT_FIRST, src/irq.6502); the rest at any line after it.
+# The first line a split may land on (src/irq.6502's: VSync's count reaches
+# it, split_count, or any line after).
 FIRST_SPLIT_LINE = 8  # (irq.6502's)
 # Splits closer than this many lines apart would race the interrupt.
 MIN_GAP = 2
@@ -172,9 +172,6 @@ def main():
     pal, splits = plan(px)
     # The palette each line shows, after centring the splits.
     vsync = list(pal[0])
-    if not splits or splits[0][0] != FIRST_SPLIT_LINE:
-        # (split 0 always lands: here it changes nothing)
-        splits.insert(0, [FIRST_SPLIT_LINE, 1, vsync[0]])
     shown = []
     cur = list(vsync)
     k = 0
@@ -212,6 +209,8 @@ def main():
                 f"    EQUB {', '.join(str(ZX_TO_BBC[c]) for c in [0] + vsync)}  ; logical 0-3 at VSync\n")
         for y, i, c in splits:
             f.write(f"    EQUB {i}, {ZX_TO_BBC[c]}    ; line {y}: logical {i} {ZX_NAMES[c]}\n")
+        if splits:
+            f.write(f"    EQUW split_count({splits[0][0]})\n")
         for k in range(len(splits) - 1):
             f.write(f"    EQUW t1_period({splits[k + 1][0] - splits[k][0]})\n")
         f.write("    EQUW &FFFF, &FFFF\n")

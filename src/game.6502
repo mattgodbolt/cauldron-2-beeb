@@ -686,15 +686,14 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
 \ 2 game over, 3 win, through 64019), a step of the sound effect.
 \ Keeps Y and the register zero page (irq.6502 keeps A and X), and the
 \ sideways bank: the tables are GAMEDATA's, and a room's drawing may
-\ have ROOMDATA in.
+\ have ROOMDATA in. The tune's address is looked up here, not by 57395
+\ in HL, so nothing it runs touches the registers' zero page (the music
+\ and the effects use none, sound.6502) and none need saving: saving them
+\ was most of the VSync's time, and the bass's edges waited on it.
 .z57664
 {
     ZA_INTERRUPT
-    TYA : PHA
-    LDX #ZP_REGS_END - ZP_REGS - 1
-.save
-    LDA ZP_REGS,X : PHA
-    DEX : BPL save
+    ZA_AUTO2 tune
     LDA hook_off : BNE off
     LDA romshad : PHA
     JSR page_game
@@ -702,23 +701,19 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
     INC a61248+1
 .stepped
     LDA a24002 : BEQ effect
-    LDX #LO(a64019) : STX rl : LDX #HI(a64019) : STX rh
-    JSR z57395
-    JSR tune
+    ASL A : TAX                         ; (the word at 64019 + 2A)
+    LDA a64019,X : STA tune
+    LDA a64019+1,X : STA tune+1
+    JSR play                            ; (X and Y kept)
 .effect
     LDA a24000 : BEQ done
-    JSR z57714
+    JSR z57714                          ; (X and Y kept)
 .done
     PLA : STA romshad : STA romsel
 .off
-    LDX #0
-.restore
-    PLA : STA ZP_REGS,X
-    INX : CPX #ZP_REGS_END - ZP_REGS : BNE restore
-    PLA : TAY
     RTS
-.tune
-    JMP (rhl)
+.play
+    JMP (tune)
     ZA_CANJUMP z50113, z51863, z51413
 }
 
