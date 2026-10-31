@@ -113,44 +113,62 @@ ZA_AUTO1 xr_lines               ; ... and its lines (0 is 256)
     LDA #0 : STA xor_seg.last_op+1  ; (xr_step is this call's)
     \ As blocks (xor_seg): the run on one cell row and its lines' bytes in
     \ X's reach; each block too off the attributes.
-    LDA #0 : STA fits
+    STA fits
     TXA : ORA #&E0 : EOR #&FF                   ; 31 - x
     CLC : ADC #1 : CMP xr_n : BCC block         ; (32 - x bytes on the row)
     LDA xr_step : CMP #32 : BCS block
     DEC fits
 .block
-    \ xs_nb: the lines left in the character row, at most xr_lines.
+    JSR xl_rows
+    BIT fits : BPL alone
+    CPY #&58 : BCS alone
+    \ The rest of the run, a character row's lines at a time, until it
+    \ ends or meets the attributes (xor_seg's run).
+    LDA xr_img : STA xs_img : LDA xr_img+1 : STA xs_img+1
+    LDA xr_n : STA xs_n
+    LDA #&80 : STA xor_seg.run_op+1
+    LDX bx : JSR xor_seg                        ; (Y = by)
+    LDA #0 : STA xor_seg.run_op+1
+    LDA xr_lines : BEQ done
+    LDY by
+    JMP block
+.alone
+    LDA #1 : STA xs_nb
+    JSR xor_line
+    JSR xl_next : BNE block
+.done
+    RTS
+}
+
+\ xor_lines' xs_nb: the lines left in Y's character row, at most
+\ xr_lines. X changed.
+.xl_rows
+{
     TYA : AND #7 : EOR #7 : CLC : ADC #1         ; 8 - (y AND 7)
     LDX xr_lines : BEQ lines_ok                 ; (0: 256)
     CMP xr_lines : BCC lines_ok
     TXA
 .lines_ok
     STA xs_nb
-    BIT fits : BPL alone
-    CPY #&58 : BCS alone
-    LDA xr_img : STA xs_img : LDA xr_img+1 : STA xs_img+1
-    LDA xr_n : STA xs_n
-    LDX bx : JSR xor_seg                        ; (Y = by)
-    JMP done_lines
-.alone
-    LDA #1 : STA xs_nb
-    JSR xor_line
-.done_lines
-    \ Past them: the image, xs_nb * xr_step on (xs_span); the address,
-    \ the next line down.
+    RTS
+}
+
+\ xor_lines' run past xs_nb lines: the image xs_span on (xr_img), the
+\ address the next line down (bx, by; Y = by), xr_lines fewer. Z set:
+\ the run's done.
+.xl_next
+{
     LDA xr_img : CLC : ADC xs_span : STA xr_img
     BCC stepped : INC xr_img+1
 .stepped
-    LDA xr_lines : SEC : SBC xs_nb : STA xr_lines : BEQ done
-    LDA by : CLC : ADC xs_nb : STA by
+    LDA xor_lines.by : CLC : ADC xs_nb : STA xor_lines.by
     AND #7 : BNE same_row
-    LDA bx : CLC : ADC #32 : STA bx
+    LDA xor_lines.bx : CLC : ADC #32 : STA xor_lines.bx
     BCS same_row
-    LDA by : SEC : SBC #8 : STA by
+    LDA xor_lines.by : SEC : SBC #8 : STA xor_lines.by
 .same_row
-    LDY by
-    JMP block
-.done
+    LDY xor_lines.by
+    LDA xr_lines : SEC : SBC xs_nb : STA xr_lines
     RTS
 }
 
@@ -213,6 +231,7 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     ZA_AUTO2 br                     ; ... and its right four
     ZA_AUTO2 bm                     ; ... and 16 before them, a pair's second byte's
     ZA_AUTO2 bn
+    ZA_AUTO2 bl0                    ; the block's first byte's bl
     ZA_AUTO1 r8
     ZA_AUTO1 i0
     ZA_AUTO1 i1
@@ -223,8 +242,8 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     ZA_AUTO1 sv
     ZA_AUTO1 old
     STX sp
-    TYA : AND #7 : ORA zx_lo,X : STA bl : ORA #8 : STA br
-    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA bl+1 : STA br+1 ; (C clear: AND #&18, ASL)
+    TYA : AND #7 : ORA zx_lo,X : STA bl : STA bl0 : ORA #8 : STA br
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA bl+1 : STA br+1 : STA bl0+1 ; (C clear: AND #&18, ASL)
     TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA sp+1
     TXA : LSR A : LSR A : AND #&38 : STA r8             ; the character row * 8
     TYA : AND #&18 : ASL A : ASL A : ASL A : ORA r8 : STA r8
@@ -232,6 +251,7 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
     LDA xs_img+1 : SBC #0 : STA img_a+2
     LDA img_a+1 : SEC : SBC #1 : STA img_b+1            ; (X: the index + 2)
     LDA img_a+2 : SBC #0 : STA img_b+2
+.block
     LDA xs_nb : CLC : ADC #239 : STA end_op+1           ; (Y past the last line)
     LDA bl : SEC : SBC #16 : STA bm : ORA #8 : STA bn   ; (bl's low nibble is the line)
     LDA bl+1 : SBC #0 : STA bm+1 : STA bn+1
@@ -383,7 +403,31 @@ ZA_AUTO1 xs_span                ; ... and on: xs_nb * xr_step
 .seg_done
     \ X: the last line's first byte's index.
     TXA : SEC : SBC i0 : CLC : ADC xr_step : STA xs_span
+.run_op
+    LDA #0 : BNE next_row           ; (xor_lines' run: non-zero)
     RTS
+.next_row
+    \ xor_lines' run, past these lines: the next character row's, from
+    \ its first line, unless the run's done or meets the attributes.
+    JSR xl_next : BEQ run_out
+    CPY #&58 : BCS run_out
+    JSR xl_rows
+    LDA bl0 : AND #&F0 : STA bl0 : STA bl : ORA #8 : STA br
+    LDA bl0+1 : CLC : ADC #HI(ROW_BYTES) : STA bl0+1 : STA bl+1 : STA br+1
+    LDA sp : CLC : ADC #32 : STA sp
+    BCC sp_on : INC sp+1
+.sp_on
+    LDA r8 : CLC : ADC #8 : STA r8
+    LDA img_a+1 : CLC : ADC xs_span : STA img_a+1
+    BCC img_a_on : INC img_a+2
+.img_a_on
+    LDA img_b+1 : CLC : ADC xs_span : STA img_b+1
+    BCC img_b_on : INC img_b+2
+.img_b_on
+    JMP block
+.run_out
+    RTS
+    ASSERT LO(ROW_BYTES) = 0
 }
     ASSERT LO(spread_hi) = 0 AND LO(spread_lo) = 0 AND LO(unlit) = 0   ; (operands' low bytes)
 ENDSECTION
