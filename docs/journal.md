@@ -143,3 +143,38 @@ How the port got here, in order: what worked and what didn't.
   the sprites' pre-shift and XOR, under optimisation.
 - `tools/fuzz.py --count 12 --seed 2 --passes 1500`: all agree (up to
   ten rooms crossed, down to one life). fuzz2_0 is kept as a scenario.
+
+## 2026-10-31: the sprite drawing made fast
+
+- `make passes` gives each pass's frame; the port took 1.36-1.70 times
+  the original's frames over the scenarios (idle79 1.36, right56 1.70).
+  A sampling profiler (PC every 397 cycles in play) put most of the
+  compute in the pre-shift and the XOR's per-byte address translation.
+- The XOR a run at a time (`xor_run`): a line's bytes along a cell row
+  are ours 16 apart on one character row and line, so the address, the
+  scenery-ink row and the pattern row are worked out once. The patterns
+  are indexed row * 8 + ink, so a cell's ink indexes them directly. The
+  clipped draw picks its run once per call, as the original's count down
+  would. Then `xor_down`/`xor_lines`: the next line down in a character
+  row reuses the line above's working; and the mixed case (an erase's,
+  mostly) inline.
+- The pre-shift in one pass: k one-bit passes of the stream and its
+  carry turn a ring of 16 * words + 1 bits right by k, so each byte
+  takes the low k bits of the one before, the first the last byte's
+  ASLed (checked against the k passes in Python, then by `make
+  sprites`). Then fused with the copy: the image shifted as it's copied,
+  the stream's bytes past the buffer in place after. Frames of 128-255
+  bytes reach 256 or so bytes past their buffer (the signed halving), on
+  the original too.
+- Room for it: the sprite routines that read GAMEDATA's tables run from
+  GAMEDATA (decision 17).
+- Every check identical throughout (`make sprites` also at 200 cases of
+  seed 7). Frames per pass against the original's, 2026-10-31: fire56
+  1.073, idle110 1.097, idle56 1.087, idle79 1.071, idle97 1.170, left56
+  1.068, leftright97 1.063, right56 1.078, updown10 1.073.
+- Not at 1 yet. With the XOR and the shift stubbed out (results then
+  differ), idle56 ran at 0.77 of the original's frames but idle79 still
+  at 1.00: there the still slots' busy waits set the pace, and our
+  per-object work spills past a VSync where the original's doesn't. By
+  instruction timings the XOR is still several times the Z80's per byte
+  (colour costs a read, masks and a pattern); the pre-shift about the Z80's.

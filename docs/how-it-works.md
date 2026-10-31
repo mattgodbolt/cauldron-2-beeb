@@ -84,3 +84,5 @@ character-row tables). Only the access translates:
 GAMEDATA stays paged in (`romsel` and the OS's copy `romshad`). The room
 drawing pages ROOMDATA in for as long as it reads the room's data and
 pages GAMEDATA back (`page_rooms`, `page_game`).
+Most of the sprite drawing runs from GAMEDATA itself (decision 17): it
+reads GAMEDATA's tables, so it needs it paged in anyway.
