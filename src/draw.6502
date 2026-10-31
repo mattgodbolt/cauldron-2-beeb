@@ -30,7 +30,7 @@
 \ The spread tables and the lit-pixel mask: a Spectrum byte's left four
 \ pixels as a MODE 1 byte, all of each lit pixel's bits set (spread_hi),
 \ its right four (spread_lo); a MODE 1 byte's lit pixels the same way
-\ (litmask). After init_zxscreen (lit_lo, lit_hi).
+\ (litmask). After init_zxscreen (lit_lo).
 .init_draw
 {
     LDX #0
@@ -39,7 +39,7 @@
     TXA : LSR A : LSR A : LSR A : LSR A : ORA spread_hi,X : STA spread_hi,X
     TXA : AND #&0F : STA spread_lo,X
     ASL A : ASL A : ASL A : ASL A : ORA spread_lo,X : STA spread_lo,X
-    LDA lit_lo,X : ORA lit_hi,X : STA litmask,X
+    LDA lit_lo,X : ASL A : ASL A : ASL A : ASL A : ORA lit_lo,X : STA litmask,X
     INX : BNE each
     STX xor_erase                   ; (0)
     RTS

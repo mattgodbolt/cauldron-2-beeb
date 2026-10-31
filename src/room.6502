@@ -126,6 +126,8 @@
     ZA_AUTO1 trow
     ZA_AUTO1 tcol
     ZA_AUTO1 tile
+    ZA_AUTO1 attr, row, col, pe, po
+    ZA_AUTO2 q, q8
     STA room
     \ The bank list into main RAM (62954, a word a room).
     ASL A : TAY
@@ -183,19 +185,46 @@
     LDA base+1 : ADC #0 : AND #&1F : STA p+1
     LDA p : CLC : ADC #LO(a48870) : STA p
     LDA p+1 : ADC #HI(a48870) : STA p+1
-    LDY #0 : LDA (p),Y : PHA
+    LDY #0 : LDA (p),Y : STA attr
     AND #7 : STA glyph_ink
-    \ Its pixels, 34526 + 8 * (base + byte), at row B, column C.
-    LDA base : STA re : LDA base+1 : STA rd
-    ASL re : ROL rd : ASL re : ROL rd : ASL re : ROL rd
-    LDA re : CLC : ADC #LO(a34526) : STA re
-    LDA rd : ADC #HI(a34526) : STA rd
-    LDA brow : ASL A : ASL A : ADC trow : ADC #4 : STA rb
-    LDA bcol : ASL A : ASL A : ADC tcol : STA rc
-    LDA tile : JSR z54464
-    LDA #LO(a24097) : STA re : LDA #HI(a24097) : STA rd
-    JSR z57341
-    PLA : LDY #0 : STA (rl),Y
+    \ The cell: row trow + 4 * brow + 4, column tcol + 4 * bcol. Its
+    \ attribute into the buffer (24097 + its attribute offset, as 57341
+    \ gives it) and its ink as its scenery's.
+    LDA brow : ASL A : ASL A : ADC trow : ADC #4 : STA row  ; (C clear)
+    LDA bcol : ASL A : ASL A : ADC tcol : STA col
+    LDA row : LSR A : LSR A : LSR A : STA p+1               ; row * 32 + col
+    LDA row : ASL A : ASL A : ASL A : ASL A : ASL A : ORA col : STA p
+    LDA p : CLC : ADC #LO(a24097) : STA q
+    LDA p+1 : ADC #HI(a24097) : STA q+1
+    LDY #0 : LDA attr : STA (q),Y
+    LDA p+1 : CLC : ADC #HI(scen_ink) : STA p+1
+    ASSERT LO(scen_ink) = 0
+    LDA glyph_ink : STA (p),Y
+    \ Its pixels, 34526 + 8 * (base + byte) (in 16 bits, as the original
+    \ forms it), written as 54464 writes them, straight into our cell.
+    LDA tile : CLC : ADC base : STA p
+    LDA base+1 : ADC #0 : STA p+1
+    ASL p : ROL p+1 : ASL p : ROL p+1 : ASL p : ROL p+1
+    LDA p : CLC : ADC #LO(a34526) : STA p
+    LDA p+1 : ADC #HI(a34526) : STA p+1
+    LDA col : ASL A : ASL A : ASL A : ASL A : STA q         ; (col AND 15) * 16
+    LDA row : ASL A : STA q+1
+    LDA col : LSR A : LSR A : LSR A : LSR A : CLC : ADC q+1
+    ADC #HI(screen) : STA q+1
+    LDA q : ORA #8 : STA q8 : LDA q+1 : STA q8+1
+    LDA glyph_ink : ASL A : ASL A : ASL A : ASL A : ASL A : ORA row : TAX
+    LDA pat_even,X : STA pe
+    LDA pat_odd,X : STA po
+    LDY #0
+.line
+    LDA (p),Y : TAX
+    LDA spread_hi,X : AND pe : STA (q),Y
+    LDA spread_lo,X : AND pe : STA (q8),Y
+    INY
+    LDA (p),Y : TAX
+    LDA spread_hi,X : AND po : STA (q),Y
+    LDA spread_lo,X : AND po : STA (q8),Y
+    INY : CPY #8 : BNE line
     INC tcol : LDA tcol : CMP #4 : BEQ done1
     JMP each_tile
     ZA_UNREACHABLE
@@ -449,6 +478,9 @@ PANEL_RP3 = 2                       ; green
 .z53550
 {
     ZA_AUTO1 n
+    \ The panel's colours first: its pixels take their logical colours
+    \ from the rows' palettes as they're drawn (the front end's may show).
+    JSR plain_colours
     LDA #6 : STA a24035
     LDX #127
 .attr

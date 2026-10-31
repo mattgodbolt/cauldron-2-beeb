@@ -133,12 +133,12 @@ JOY_FIRE   = &10
 JOY_LOW    = &40                    ; an axis below this is right / down
 JOY_HIGH   = &C0                    ; ... at or above this left / up
 
-\ The ADC's addresses for this machine: call while the OS is in charge.
-\ OSBYTE 0's X: 3 and 4 are the Master 128 and ET; the B (0, 1) and B+
+\ The ADC's addresses for this machine, from OSBYTE 0's X, which C2's
+\ loader keeps in machine while the OS is in charge. OSBYTE 0's X: 3 and 4 are the Master 128 and ET; the B (0, 1) and B+
 \ (2) have it at &FEC0, and the Compact (5) has none.
 .joy_init
 {
-    LDA #0 : LDX #1 : JSR osbyte
+    LDX machine
     CPX #3 : BCC done
     CPX #5 : BCS done
     LDA #LO(ADC_MASTER) : LDX #HI(ADC_MASTER)

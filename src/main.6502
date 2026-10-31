@@ -9,6 +9,7 @@
 \ ***************************************************************************
 
 INCLUDE "defs.6502"
+INCLUDE "lib/zx02.6502"                 ; (baron's example compressor, for C2's code)
 INCLUDE "regs.6502"
 INCLUDE "../build/syms.6502"
 
@@ -34,7 +35,8 @@ game_bank   = ZP_FIXED + 10     ; the sideways banks the loader filled: GAMEDATA
 room_bank   = ZP_FIXED + 11     ; ... and ROOMDATA (room.6502's page_game, page_rooms)
 xor_erase   = ZP_FIXED + 12     ; non-zero: the next 57058 / 57194 erases (draw.6502)
 glyph_ink   = ZP_FIXED + 13     ; the ink 54464 writes in (draw.6502)
-ZP_END      = ZP_FIXED + 14
+machine     = ZP_FIXED + 14     ; OSBYTE 0's X, read by C2's loader (input.6502's joy_init)
+ZP_END      = ZP_FIXED + 15
     ASSERT ZP_END <= &90        ; (&90-&9F: Econet, &A0-: the OS's NMI and beyond)
 
 SECTION Boot, filename = "!BOOT", exec = &FFFFFFFF
@@ -58,6 +60,7 @@ LD_DST = &82
 DATA_LOAD = &1900
 SECTION GameData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "GAMEDAT", guard = &C000
     INCLUDE "../build/data/gamedata.6502"
+    INCLUDE "../build/data/font.6502"   ; (r_font: the font; GAMEDATA is paged in whenever text prints)
 .gamedata_end
     PRINT "GAMEDATA &8000-&", ~gamedata_end, " (", &C000 - gamedata_end, " bytes free)"
     ASSERT DATA_LOAD + gamedata_end - &8000 <= LOADER_ORG
@@ -133,11 +136,75 @@ ld_end = LD_DST + 2
 ENDSECTION
 
 \ C2: the game, assembled to run from &0E00 (the DFS's workspace, free
-\ once the game owns the machine), loaded at &1900 with the loader after
-\ it, which does the disc's work and copies it down.
+\ once the game owns the machine), loaded at &1900 with its loader. The
+\ code is packed (baron's zx02 transform, decision 16): unpacked it would
+\ run past the screen's start from &1900, where the DFS loads files.
 SECTION Loader, org = &1900, load = &FFFF1900, exec = &FFFF0000 + loader, filename = "C2"
+\ C2's loader: runs where the file loaded, before the packed payload,
+\ and nothing in it is wanted afterwards. TITLE into the screen, with the
+\ OS and the DFS; then the machine is the game's: the packed code is
+\ moved up to end at the screen's start, and the unpacker, copied to page
+\ 4 (the attributes', not yet in use), unpacks it down to &0E00 over the
+\ DFS's workspace and the loader. The packed bytes end above the unpacked
+\ code, so the unpacking never overtakes them.
+.loader
+{
+    LDX #LO(title_block) : LDY #HI(title_block)
+    LDA #&FF : JSR osfile           ; load TITLE at its own address
+    LDA #0 : LDX #1 : JSR osbyte : STX machine
+    SEI                             ; the interrupts stay off until install_irq
+    \ The packed bytes up, last byte first (they move up over themselves).
+    LDA #LO(payload_end) : STA LD_SRC : LDA #HI(payload_end) : STA LD_SRC+1
+    LDA #LO(PACKED_TOP) : STA LD_DST : LDA #HI(PACKED_TOP) : STA LD_DST+1
+    LDX #HI(payload_end - payload + &FF)
+    LDY #0
+.up
+    LDA LD_SRC : BNE up_lo : DEC LD_SRC+1
+.up_lo
+    DEC LD_SRC
+    LDA LD_DST : BNE up_dlo : DEC LD_DST+1
+.up_dlo
+    DEC LD_DST
+    LDA (LD_SRC),Y : STA (LD_DST),Y
+    LDA LD_SRC : CMP #LO(payload) : BNE up
+    LDA LD_SRC+1 : CMP #HI(payload) : BNE up
+    \ The unpacker to page 4.
+    LDX #unpacker_end - unpacker_start
+.tramp
+    LDA unpacker_payload - 1,X : STA unpacker_start - 1,X
+    DEX : BNE tramp
+    JMP unpack_game
+}
+
+\ The unpacker, assembled for page 4 and carried here.
+.unpacker_payload
+    SECTION Unpacker, org = &0400
+    ZA_POOL &00..ZP_REGS-1
+.unpacker_start
+.unpack_game
+{
+    ZA_ENTRY
+    LDA #LO(PACKED_TOP - (payload_end - payload)) : STA src
+    LDA #HI(PACKED_TOP - (payload_end - payload)) : STA src+1
+    LDA #LO(code_start) : STA dst : LDA #HI(code_start) : STA dst+1
+    JSR unpack
+    JMP start
+}
+    INCLUDE "lib/dzx02.6502"
+.unpacker_end
+    ASSERT unpacker_end <= &0700    ; (page 4 to 6 only: the attributes)
+    ENDSECTION
+
+\ OSFILE's block for loading TITLE where it was saved.
+.title_block
+    EQUW title_name
+    EQUD 0, &FFFFFFFF               ; (exec's low byte non-zero: its own address)
+    EQUD 0, 0
+.title_name
+    EQUS "TITLE", 13
+
 .payload
-    SECTION Code, org = &0E00, guard = screen
+    SECTION Code, org = &0E00, guard = screen, transform = "zx02"
     ZA_POOL &00..ZP_REGS-1
 .code_start
 
@@ -191,41 +258,19 @@ ENDIF
     INCLUDE "frontend.6502"
     INCLUDE "sound.6502"
     INCLUDE "../build/data/title.6502"
-    INCLUDE "../build/data/font.6502"   ; (r_font: the font, in main RAM)
     INCLUDE "../build/stubs.6502"
 .code_end
     ENDSECTION
 .payload_end
 
-\ C2's loader: runs where the file loaded, after the payload, and nothing
-\ in it is wanted afterwards. TITLE into the screen, with the OS and the
-\ DFS; then the machine is the game's: the payload down to &0E00, over the
-\ DFS's workspace.
-.loader
-    LDX #LO(title_block) : LDY #HI(title_block)
-    LDA #&FF : JSR osfile           ; load TITLE at its own address
-    SEI                             ; the interrupts stay off until install_irq
-    LDA #LO(payload) : STA LD_SRC : LDA #HI(payload) : STA LD_SRC+1
-    LDA #LO(code_start) : STA LD_DST : LDA #HI(code_start) : STA LD_DST+1
-    LDX #HI(code_end - code_start + &FF)
-    LDY #0
-.copy_down
-    LDA (LD_SRC),Y : STA (LD_DST),Y ; (upwards, to a lower address: safe)
-    INY : BNE copy_down
-    INC LD_SRC+1 : INC LD_DST+1
-    DEX : BNE copy_down
-    JMP start
-
-\ OSFILE's block for loading TITLE where it was saved.
-.title_block
-    EQUW title_name
-    EQUD 0, &FFFFFFFF               ; (exec's low byte non-zero: its own address)
-    EQUD 0, 0
-.title_name
-    EQUS "TITLE", 13
-
 .loader_end
     ASSERT loader_end <= screen      ; (TITLE loads over the screen after it)
+\ Where the packed bytes end once moved, and the unpacking's margin: it
+\ never writes past what it has read when the packed bytes end at least
+\ this far above the unpacked code's end.
+PACKED_TOP = screen
+    ASSERT PACKED_TOP >= code_end + 16
+    ASSERT PACKED_TOP >= payload_end    ; (the packed bytes move up, clear of the loader before them)
 ENDSECTION
 
 \ The original's attribute file, kept exactly as the original's
@@ -240,11 +285,7 @@ ATTR_HI = HI(attrs) - &58
 \ the OS's and BASIC's, free once the game owns the machine.
 SECTION Vars, org = &0700, virtual = TRUE
 .vars       SKIP 25100 - 24000
-    ASSERT P% <= &0D00              ; (page &0D: the NMI and the Master's vectors)
-ENDSECTION
-
-\ The game's workspace, after its code: not in the file.
-SECTION Work, org = code_end, guard = screen, virtual = TRUE
+\ After them, to page &0D, the palette's workspace.
 .frame_ula      SKIP 16         ; the palette VSync writes (irq.6502)
 .split_ula      SKIP 4 * MAX_SPLITS ; each split's four writes
 .split_latch    SKIP 2 * (MAX_SPLITS + 1)   ; T1's periods
@@ -255,6 +296,11 @@ PAL_PROG_LEN = 1 + 4 + 2 * MAX_SPLITS + 2 * (MAX_SPLITS + 1)
 .pal_prog       SKIP PAL_PROG_LEN ; the screen's palette program (make_program)
 .split_lines    SKIP MAX_SPLITS ; ... its splits' lines
 .pat_q          SKIP 4          ; make_patterns' row: logical 1-3 at +1
+    ASSERT P% <= &0D00              ; (page &0D: the NMI and the Master's vectors)
+ENDSECTION
+
+\ The game's workspace, after its code: not in the file.
+SECTION Work, org = code_end, guard = screen, virtual = TRUE
 .bank_list      SKIP BANK_LIST_MAX  ; the room's tile-bank list (62954), copied
 IF DEFINED(VIEWER)
 .view_num       SKIP 1          ; the viewer's room (tools/roomcheck.mjs sets it)
@@ -267,7 +313,6 @@ ENDIF
     ALIGN &100
 .zx_lo          SKIP 256        ; zxscreen.6502's tables
 .zx_hi          SKIP 256
-.lit_hi         SKIP 256
 .lit_lo         SKIP 256
 .spread_hi      SKIP 256        ; draw.6502's
 .spread_lo      SKIP 256

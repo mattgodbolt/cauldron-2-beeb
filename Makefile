@@ -36,6 +36,8 @@ SOURCES  = $(wildcard src/*.6502)
 # Made from the original by the tools, never committed.
 DATA      = build/data/gamedata.6502 build/data/roomdata.6502 build/data/font.6502
 GENERATED = build/data/title.bin $(DATA)
+# The tunes from the original (tools/mkmusic.py; src/sound.6502).
+GENERATED += build/data/music.6502
 VIEWER    = build/viewer.ssd
 # Until game.6502 has the original's entry, the disc shows a room (room.6502's demo).
 DEMO     := $(shell grep -qs '^\.z52180' src/game.6502 || echo "-D DEMO_ROOM=1")
@@ -44,7 +46,7 @@ DEMO     := $(shell grep -qs '^\.z52180' src/game.6502 || echo "-D DEMO_ROOM=1")
 BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short HEAD 2>/dev/null || echo NOGIT)$(shell git diff --quiet HEAD -- . ':(exclude)$(DISC)' 2>/dev/null || echo +)
 
 .DELETE_ON_ERROR:
-.PHONY: all run check disc fetch zx disasm venv clean passes rooms sprites
+.PHONY: all run check disc fetch zx disasm venv clean passes rooms sprites music front
 
 all: $(TARGET)
 
@@ -74,7 +76,7 @@ build/data/title.scr: original/CauldronII.tap tools/tapblock.py
 build/data/title.bin: build/data/title.scr tools/mkscreen.py
 	python3 tools/mkscreen.py $< $@ --png $(@:.bin=.png)
 
-check: $(TARGET) rooms sprites
+check: $(TARGET) rooms sprites music front
 
 rooms: $(VIEWER) build/zxrooms/room_127.scr
 	node tools/roomcheck.mjs
@@ -84,6 +86,33 @@ sprites: $(VIEWER) build/zxrooms/room_127.scr
 	$(PYTHON) tools/spritecases.py make
 	node tools/spritecheck.mjs
 	$(PYTHON) tools/spritecases.py cmp
+
+build/data/music.6502: build/c2.z80 tools/mkmusic.py tools/zxmusic.py
+	@mkdir -p build/data
+	$(PYTHON) tools/mkmusic.py $< $@
+
+# The music check's disc: the tunes stepped by the interrupt as 57664
+# would, with nothing else (src/sound.6502's MUSICCHECK).
+build/musiccheck.ssd: $(SOURCES) $(GENERATED) tools/mksyms.py | build
+	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	$(ASM) -D MUSICCHECK=1 -D 'BUILD="$(BUILD) musiccheck"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) src/main.6502
+
+# The music against tools/zxmusic.py's decode of the original's
+# (tools/musicmodel.py), from the chip's bytes in jsbeeb.
+music: build/musiccheck.ssd
+	node tools/musiccheck.mjs
+
+# The front end's test disc: its own printer and clear in place of the
+# drawing's (src/frontend.6502's FETEST).
+build/fetest.ssd: $(SOURCES) $(GENERATED) tools/mksyms.py | build
+	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	$(ASM) -D FETEST=1 -D 'BUILD="$(BUILD) fetest"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) src/main.6502
+
+# The menu, the keys, game over and the win (tools/fecheck.mjs).
+front: build/fetest.ssd
+	node tools/fecheck.mjs
+
+
 
 # Always from a clean tree, so the stamp names the commit the disc holds.
 disc:

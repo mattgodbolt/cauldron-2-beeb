@@ -28,12 +28,13 @@
 \ ... or at zx_ptr, already ours.
 .zx_read_ptr
     LDY #8 : LDA (zx_ptr),Y : TAX : LDA lit_lo,X : STA zx_tmp
-    LDY #0 : LDA (zx_ptr),Y : TAX : LDA lit_hi,X : ORA zx_tmp
+    LDY #0 : LDA (zx_ptr),Y : TAX : LDA lit_lo,X
+    ASL A : ASL A : ASL A : ASL A : ORA zx_tmp
     RTS
 
 \ The tables (init_zxscreen): by L, our address's low byte (but the line)
 \ and high byte (but the third); by one of our bytes, its lit pixels as
-\ the high or low nibble of a Spectrum byte.
+\ the low nibble of a Spectrum byte.
 .init_zxscreen
 {
     LDX #0
@@ -46,7 +47,6 @@
     \ and 3), as four bits.
     TXA : LSR A : LSR A : LSR A : LSR A : STA zx_tmp
     TXA : ORA zx_tmp : AND #&0F : STA lit_lo,X
-    ASL A : ASL A : ASL A : ASL A : STA lit_hi,X
     INX : BNE each
     RTS
 }

@@ -252,26 +252,6 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
     RTS
 }
 
-\ 53101 GameOver: tune 3, the text and the score, wait for fire, restart.
-.z53101
-{
-    LDA #1 : STA hook_off               ; DI
-    JSR z51850
-    LDA #2 : STA a24002
-    LDA #0 : STA hook_off               ; EI
-    JSR z53087
-    LDA #LO(a58515) : STA rl : LDA #HI(a58515) : STA rh
-    LDA #6 : STA rc : LDA #3 : STA rb   ; BC = 774
-    JSR z54363
-    LDA #LO(a58803) : STA rl : LDA #HI(a58803) : STA rh
-    LDA #16 : STA rc : LDA #21 : STA rb ; BC = 5392
-    JSR z54363
-.released
-    JSR z52767 : AND #16 : BNE released
-.pressed
-    JSR z52767 : AND #16 : BEQ pressed
-    JMP z52235
-}
 
 \ ---------------------------------------------------------------------------
 \ 53310 GoOutside, A = the map byte (bit 7 set): the room is A AND 127,
@@ -437,18 +417,6 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
     RTS
 }
 
-\ 53798 CackleBeep: 24001 = (24001 - 1) AND 31, a tone at that pitch
-\ (52854). Every register kept.
-.z53798
-{
-    PHA
-    G_PUSH rde : G_PUSH rhl : G_PUSH rix : G_PUSH rbc
-    LDA a24001 : SEC : SBC #1 : AND #31 : STA a24001
-    JSR z52854
-    G_POP rbc : G_POP rix : G_POP rhl : G_POP rde
-    PLA
-    RTS
-}
 
 \ 53858 NewGame's reset: the variables 24000-25058, score 0000000, the
 \ refills back, MAGIC 99, the screen and attributes cleared, room 10's
@@ -756,11 +724,6 @@ FUNCTION dec_bc_us(n) = (10 + 26 * n - 5) * 2 DIV 7
 
 z57696 = z57664.effect
 
-\ 57714 IrqEffect, A = 24000: count it down and beep at (A AND 31) + 50.
-.z57714
-    SEC : SBC #1 : STA a24000
-    AND #31 : CLC : ADC #50
-    JMP z52854
 
 \ 53534: the border from A (OUT (254)), only ever 0 (frontend.md). The
 \ BBC's border is always black: nothing to do. (Its beeper bit isn't

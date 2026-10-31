@@ -808,33 +808,7 @@ ENDMACRO
     JMP z57616
 }
 
-\ 6 (26, the cauldron): with all seven, +100, the win tune and text, wait
-\ for fire, restart. Without, death.
-.z56811
-{
-    JSR z56794
-    BEQ won
-    JMP z56571
-.won
-    G_DE a58850
-    JSR z57616
-    LDA #1 : STA hook_off               ; DI
-    JSR z51400
-    LDA #3 : STA a24002
-    LDA #0 : STA hook_off               ; EI
-    JSR z53087
-    G_HL a58666
-    LDA #6 : STA rc : STA rb            ; BC = 1542
-    JSR z54363
-    G_HL a58803
-    LDA #16 : STA rc : LDA #12 : STA rb ; BC = 3088
-    JSR z54363
-.released
-    JSR z52767 : AND #16 : BNE released
-.pressed
-    JSR z52767 : AND #16 : BEQ pressed
-    JMP z52235
-}
+\ 6 (26, the cauldron): 56811, the win, is the front end's (frontend.6502).
 
 \ 7 (44): with the scissors (34) and not yet the moon (7), the moon,
 \ +1000, a sound. It stays.

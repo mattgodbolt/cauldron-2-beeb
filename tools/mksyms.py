@@ -27,7 +27,7 @@ REGIONS = [
     (25900, 34525, "r_sprites"),    # sprite graphics (sideways, GAMEDATA)
     (34526, 49510, "r_rooms"),      # tiles, blocks, layouts, tile attributes (ROOMDATA)
     (49511, 50022, "r_font"),       # the font (main RAM)
-    (57726, 64998, "r_tables"),     # tables, texts, sound data (GAMEDATA)
+    (57726, 64194, "r_tables"),     # tables, texts, the tone table (GAMEDATA; nothing reads past 64194)
 ]
 
 CODE = re.compile(r"\bz(\d{5})\b")

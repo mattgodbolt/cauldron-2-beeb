@@ -7,7 +7,7 @@ committed: the original's files aren't).
 The regions of tools/mksyms.py, as the original's bytes, each under its
 region's label (docs/how-it-works.md, "Memory"):
 
-    gamedata.6502  r_sprites (25900-34525) then r_tables (57726-64998):
+    gamedata.6502  r_sprites (25900-34525) then r_tables (57726-64194):
                    the sideways bank GAMEDATA
     roomdata.6502  r_rooms (34526-49510), then room_plans: the sideways
                    bank ROOMDATA
