@@ -761,3 +761,10 @@ z57696 = z57664.effect
     SEC : SBC #1 : STA a24000
     AND #31 : CLC : ADC #50
     JMP z52854
+
+\ 53534: the border from A (OUT (254)), only ever 0 (frontend.md). The
+\ BBC's border is always black: nothing to do. (Its beeper bit isn't
+\ touched either: the original keeps 24006's bits, which only the sound
+\ uses, and the sound is the SN76489's.)
+.z53534
+    RTS
