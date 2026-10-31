@@ -22,6 +22,7 @@ VARS0 = 24000
 
 # (first, last, why): never compared.
 IGNORE = [
+    (24000, 24000, "the explosion sound's frames left: the interrupt counts it, and the BBC's passes take other frames"),
     (24003, 24004, "sound sequence pointer (52781): an address, the BBC's differs"),
     (24040, 24041, "player area's row address word: the port may hold it differently"),
     (24050, 24051, "57415's saved SP: the Z80 stack trick, no BBC counterpart"),

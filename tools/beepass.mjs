@@ -65,7 +65,7 @@ function parseScenarios(path) {
 const keysAt = (sc, n) => sc.keys.reduce((bits, [p, b]) => (p <= n ? b : bits), 0);
 
 // The BBC's keys for the Kempston bits (the port's controls).
-const BBC_KEY = { 1: "X", 2: "Z", 4: "SLASH_QUESTION", 8: "COLON_STAR", 16: "RETURN" };
+const BBC_KEY = { 1: "X", 2: "Z", 4: "SLASH", 8: "COLON_STAR", 16: "RETURN" };
 
 // As zxpass.py: the run the random pointer is aimed at, and the extras.
 const RAND_RUN = [25092, 25100];
