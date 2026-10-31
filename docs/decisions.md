@@ -46,3 +46,34 @@ the same geometry and handler), to sweep again here.
 The title (the tape's SCREEN$): nine splits, 6705 of its 6802 lit pixels
 in their own colour (2026-10-31). The rest are on lines that show five
 colours.
+
+## 6. Controls (2026-10-31, provisional)
+
+The original reads a Kempston joystick (52658) or six keys (52695, the
+Interface II's 6-0 and A to abort by default, redefinable), through the
+vector at 57726 that its menu sets. The port keeps the vector and both
+readers, each making the original's controls byte (1 up, 2 down, 4 left,
+8 right, 16 fire/bounce, 64 abort; opposite directions cancel):
+
+- **Keys** (52695): the BBC's usual ones, as cauldron-beeb's decision 9
+  and CE2: **Z** left, **X** right, **:** up, **/** down, **RETURN**
+  fire/bounce, **ESCAPE** abort. They are a table of internal key
+  numbers (`input.6502`'s `keys`, with `keys_default` and `reset_keys`)
+  in the original's order, for the front end's redefine screen.
+  Read from the System VIA's matrix, ESCAPE included: the game owns the
+  machine, and the OS never sees it.
+- **Joystick** (52658, the Kempston's place): the analogue port, X and Y
+  from the ADC polled one channel a read (thresholds a quarter from
+  each end), fire from the System VIA's PB4, mapped through the
+  original's KEMPSTON_MAP. The ADC is at &FEC0 on the B and &FE18 on the
+  Master: `joy_init` picks by OSBYTE 0 and has to run before the game
+  takes the machine over. The original's Kempston abort is the A key
+  alone in its half-row; the port's is the key table's abort key.
+- **Abort** (52767/52775): the original pushes 52775 as the reader's
+  return, so any read with the abort bit restarts at 52235, which
+  resets the stack. The port calls the reader, then 52775 tests the bit
+  and jumps to 52235, which must reset the 6502's stack likewise.
+
+Options kept: an OS-style ESCAPE (it would need the OS's keyboard
+interrupt, which the game turns off); a digital (user port) joystick
+in place of the analogue one.
