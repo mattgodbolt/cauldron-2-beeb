@@ -19,8 +19,8 @@ Cauldron 1's answers until Matt says otherwise:
 - **Colour:** no clash (cauldron-beeb's decision 5).
 - **Keys:** the BBC's usual ones (decision 6).
 - **Rights:** unofficial; the original is fetched, never committed.
-- **The remote:** commits stay local until Matt pushes; the disc at the
-  root (`cauldron2.ssd`) is rebuilt with each change worth trying.
+- **The remote:** each step is pushed to GitHub as it lands (Matt's
+  request, 2026-10-31); the disc at the root (`cauldron2.ssd`) is rebuilt with each change worth trying.
 
 ## 2. MODE 1 in the Spectrum's geometry (2026-10-31, provisional)
 
