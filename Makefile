@@ -20,7 +20,8 @@
 #                 build/viewer.ssd) against the original's own drawing
 #                 (tools/zxrooms.py): lit pixels, colours by the plan, and
 #                 attributes; build/bbcrooms/contact.png
-#   make sprites  random calls of 57194 and 57058 on both machines
+#   make sprites  random calls of 57194 and 57058 on both machines, then
+#                 some off the cell rows' ends and into the attributes
 #                 (tools/spritecases.py, tools/spritecheck.mjs)
 
 PYTHON  ?= .venv/bin/python
@@ -84,6 +85,9 @@ rooms: $(VIEWER) build/zxrooms/room_127.scr
 
 sprites: $(VIEWER) build/zxrooms/room_127.scr
 	$(PYTHON) tools/spritecases.py make
+	node tools/spritecheck.mjs
+	$(PYTHON) tools/spritecases.py cmp
+	$(PYTHON) tools/spritecases.py make --cases 20 --seed 2 --edges
 	node tools/spritecheck.mjs
 	$(PYTHON) tools/spritecases.py cmp
 
