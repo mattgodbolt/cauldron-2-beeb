@@ -207,12 +207,18 @@ ZA_AUTO1 xr_lines               ; xor_lines' lines
     INX
 .end_op
     CPX #0 : BNE cell               ; (C clear while X is less)
-    \ Past the segment's bytes: the image, the count, L + cm.
+    \ Past the segment's bytes: the image; then the line below, for
+    \ xor_lines' lines (xr_down); else the count, L + cm.
     LDA xr_img : CLC : ADC cm : STA xr_img
     BCC img_ok : INC xr_img+1
 .img_ok
+    LDA xr_down : BNE down
     LDA xr_n : SEC : SBC cm : STA xr_n : BNE more
     RTS
+.down
+    DEC xr_down
+    INC sl : INC sr : INC hy        ; (no carry: within a character row)
+    JMP line
 .more
     LDA sp : CLC : ADC cm : TAX
     LDA hy : ADC #0 : TAY
@@ -236,17 +242,23 @@ xor_run = xor_down.full
 \ Each byte of xor_down's segment's patterns: even lines, then odd at +16.
 .xr_pats
     SKIP 32
+\ The lines xor_down still has to do below its segment, as the next
+\ down, for xor_lines; 0 again after them, as xor_down's callers expect.
+.xr_down
+    EQUB 0
 
 \ xor_lines: xr_lines lines (0 is 256) of xr_n bytes from xr_img, the
 \ first at X (low), Y (high), each the next down as the original steps
 \ its lines (INC H; past a character row, L + 32 and H back a third
-\ unless that carried); each as xor_run, or within a character row
-\ after a line that was one segment on screen, as xor_down does it.
+\ unless that carried); each as xor_run, or the rest of its character
+\ row's after a line that was one segment on screen, as xor_down's
+\ next lines (xr_down), without returning between them.
 .xor_lines
 {
     ZA_AUTO1 bx
     ZA_AUTO1 by
     ZA_AUTO1 bn
+    ZA_AUTO1 k
     STX bx : STY by
     LDA xr_n : STA bn
 .run
@@ -254,22 +266,30 @@ xor_run = xor_down.full
     LDX bx : LDY by
     JSR xor_run
     DEC xr_lines : BEQ done
-.step
-    INC by
-    LDA by : AND #7 : BEQ row
-    LDA xor_down.one : BEQ run
+    LDA xor_down.one : BEQ step
+    \ k: the lines left below in the character row, at most xr_lines.
+    LDA by : AND #7 : EOR #7 : BEQ step
+    CMP xr_lines : BCC got
+    LDA xr_lines
+.got
+    STA k
+    TAX : DEX : STX xr_down
+    LDX by : INX : STX xor_down.hy
+    CLC : ADC by : STA by           ; (the last of them)
     INC xor_down.sl : INC xor_down.sr   ; (no carry: (y AND 7) < 7 above)
-    LDA by : STA xor_down.hy : STA xor_down.ly
     LDA bn : STA xr_n
     JSR xor_down.line
-    DEC xr_lines : BNE step
-.done
-    RTS
-.row
+    LDA xr_lines : SEC : SBC k : STA xr_lines : BEQ done
+.step
+    INC by
+    LDA by : AND #7 : BNE run
+    \ A new character row: L + 32, and H back a third unless that carried.
     LDA bx : CLC : ADC #32 : STA bx
     BCS run
     LDA by : SEC : SBC #8 : STA by
     JMP run
+.done
+    RTS
 }
 ENDSECTION
 
