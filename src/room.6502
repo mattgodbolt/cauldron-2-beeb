@@ -223,13 +223,12 @@ SECTION RoomData
     LDA tile_hi,X : BNE known
     JSR tile_info
 .known
-    STA p+1 : LDA tile_lo,X : STA p
     \ Its attribute into the buffer (24097 + its attribute offset, as
     \ 57341 gives it) and its ink as its scenery's: the ink colours its
     \ pixels (the original reads the attribute after them).
     LDY col
     LDA tile_attr,X : STA (arow),Y
-    AND #7 : STA (srow),Y : STA glyph_ink
+    AND #7 : STA (srow),Y
     LDY tile_blank,X : BEQ lit      ; (most cells: no pixel lit)
     LDA #0
 FOR i = 0..7
@@ -238,6 +237,8 @@ NEXT
     JMP next_cell
     ZA_UNREACHABLE
 .lit
+    LDY tile_hi,X : STY p+1
+    LDY tile_lo,X : STY p
     ORA r8 : TAX                   ; (row * 8 + ink)
     LDA pat_even,X : STA pe
     LDA pat_odd,X : STA po
@@ -289,6 +290,8 @@ NEXT
     JMP each_row
     ZA_UNREACHABLE
 .done
+    \ The ink 54464 was given last, as the original's drawing leaves it.
+    LDA scen_ink + SCREEN_ROWS * 32 - 1 : STA glyph_ink
     RTS
 }
 

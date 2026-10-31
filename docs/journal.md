@@ -316,3 +316,8 @@ How the port got here, in order: what worked and what didn't.
 - The pulses timed by T2 (decision 22): `make passes`' scenarios from
   15198 frames to 14134 (the original's 15948).
 - TEST_ROW's row address worked out once for its three 55095 calls.
+- `make timeline` over the scenarios, before and after: frames lost
+  559 to 136 (what's left is the mover's, its still slots' waits in the
+  work); the 49 room changes 1013 frames to 492 (the original's 883).
+- The timeline and the profiler skip the tile tables' labels at the top
+  of ROOMDATA, which took GAMEDATA's sprite code's time.
