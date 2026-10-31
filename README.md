@@ -99,11 +99,12 @@ The original sets its pace with its HALTs, one a moving object a pass,
 and slows as more objects come on; the port waits for the BBC's VSync
 where the original halted, so it keeps the same pace when it keeps up.
 The BBC's 2MHz 6502 has more to do than the 3.5MHz Z80 did, colouring
-each sprite's pixels as it draws them. With the sprite drawing, the
-pre-shift and the interrupt reworked, the test scenarios took 0.99 of
-the original's frames all told, each between 0.94 and 1.03 (2026-10-31;
-`make passes` prints them, `make timeline` says which frames run over
-and why).
+each sprite's pixels as it draws them. The aim is play as smooth as
+it can be, not the original's timing: with the sprite drawing, the
+interrupt, the room drawing and the sound's pulses reworked, the test
+scenarios take 0.89 of the original's frames all told, and a room draws
+in about half the original's time (2026-10-31; `make passes` prints the
+frames, `make timeline` says which run over and why).
 
 ## How it's made
 
