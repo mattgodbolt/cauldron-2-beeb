@@ -290,3 +290,15 @@ How the port got here, in order: what worked and what didn't.
   0.989 of the original's frames over all the scenarios, from idle56's
   0.938 to idle110's 1.033; idle79 is level. Main RAM's release build
   now prints 0 bytes free: the next code goes to a sideways bank.
+
+## 2026-10-31: the rooms' layouts packed (decision 21)
+
+- baron's `transform` packs at build time; only data read a room at a
+  time can be unpacked when needed, and of ROOMDATA that is the layouts
+  and the plans. Packed four rooms to a zx02 stream, unpacked into a
+  buffer in ROOMDATA at room entry (skipped when the group is there
+  already), they free room for the room drawing's code to move out of
+  main RAM: both now have room to spare (decision 21's table).
+- The unpacking costs a room change a frame now and then; skipping it
+  when the group is already in the buffer, and packs of 4 rather than
+  8, keep that to a few of the scenarios' room changes (decision 21).

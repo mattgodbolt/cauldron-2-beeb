@@ -30,7 +30,7 @@ beside its original.
 | 22528-23295 attributes | `attrs`, page-aligned | exactly the original's (decision 5); a Z80 attribute address's high byte + `ATTR_HI` is ours |
 | 24000-25099 variables, slots, buffers | `vars`, main RAM | the original's layout |
 | 25900-34525 sprites | sideways bank GAMEDATA | |
-| 34526-49510 tiles, blocks, layouts, tile attributes | sideways bank ROOMDATA | paged in only while a room draws |
+| 34526-49510 tiles, blocks, layouts, tile attributes | sideways bank ROOMDATA | paged in only while a room draws; the layouts (with the plans) packed, four rooms a pack (`room_packs`, decision 21) |
 | 49511-50022 font | main RAM | |
 | 57726-64998 tables, texts, sound data | sideways bank GAMEDATA | paged in all the time |
 | 16384-22527 screen | `screen` (MODE 1) | read through `zx_read` |
@@ -83,6 +83,10 @@ character-row tables). Only the access translates:
 
 GAMEDATA stays paged in (`romsel` and the OS's copy `romshad`). The room
 drawing pages ROOMDATA in for as long as it reads the room's data and
-pages GAMEDATA back (`page_rooms`, `page_game`).
+pages GAMEDATA back (`page_rooms`, `page_game`). What runs only with
+ROOMDATA in lives there (decision 21): the room's pack unpacked into
+`room_buf`, the tile loop, and the colours' making (`make_colours` pages
+it in for a caller with GAMEDATA in). A layout is read as
+`room_buf + 40 * (room AND ROOM_PACK - 1)`, not at 43750's `aNNNNN`.
 Most of the sprite drawing runs from GAMEDATA itself (decision 17): it
 reads GAMEDATA's tables, so it needs it paged in anyway.

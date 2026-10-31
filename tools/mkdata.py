@@ -9,8 +9,8 @@ region's label (docs/how-it-works.md, "Memory"):
 
     gamedata.6502  r_sprites (25900-34525) then r_tables (57726-64194):
                    the sideways bank GAMEDATA
-    roomdata.6502  r_rooms (34526-49510), then room_plans: the sideways
-                   bank ROOMDATA
+    roomdata.6502  r_rooms (34526-43749), r_tattr (48870-49510), then
+                   room_packs: the sideways bank ROOMDATA
     font.6502      r_font (49511-50022), main RAM
 
 Every pointer word in them is written as the BBC's address of what it
@@ -19,9 +19,14 @@ Pointers into the Spectrum's screen stay the original's values, since
 the code does arithmetic on them. A word that a pointer table holds but
 that points nowhere the port has (KEEP) is kept as it is.
 
-room_plans: each room's colours (decisions 10 and 11), tools/colours.py's
+A room's plan: its colours (decisions 10 and 11), tools/colours.py's
 plan from the original's own drawing of the room (tools/zxrooms.py's
 .scr files): 10 bytes a room, colours.pack_plan's nibbles.
+
+room_packs (decision 21): the layouts (43750-48869, 40 bytes a room) and
+the plans, ROOM_PACK rooms to a pack: a pack's layouts, then its plans,
+packed by baron's zx02 transform; room_packs is a word a pack, its
+address. Room entry unpacks its room's pack into room_buf.
 """
 import argparse
 import os
@@ -56,6 +61,9 @@ POINTERS = [
 KEEP = {0, 65290}
 ROOM_BANKS = 62954
 NUM_ROOMS = 128
+LAYOUTS = 43750      # 40 bytes a room: 5 rows of 8 blocks
+ROOM_PACK_SHIFT = 2  # 1 << it rooms to a pack (decision 21)
+ROOM_PACK = 1 << ROOM_PACK_SHIFT
 
 
 def region_of(n):
@@ -133,13 +141,27 @@ def main():
     longest = max(1 + 4 * mem[word(ROOM_BANKS + 2 * r)] for r in range(NUM_ROOMS))
 
     def roomdata(f):
-        lo, hi = region["r_rooms"]
-        f.write(".r_rooms\n")
-        emit(f, mem, lo, hi, {})
-        f.write(".room_plans\n")
+        for label in ("r_rooms", "r_tattr"):
+            lo, hi = region[label]
+            f.write(f".{label}\n")
+            emit(f, mem, lo, hi, {})
+        plans = []
         for r in range(NUM_ROOMS):
             scr = open(os.path.join(args.rooms, f"room_{r:02d}.scr"), "rb").read()
-            f.write("    EQUB " + ",".join(str(b) for b in pack_plan(plan_room(scr))) + f"   ; room {r}\n")
+            plans.append(pack_plan(plan_room(scr)))
+        packs = NUM_ROOMS // ROOM_PACK
+        f.write(f"ROOM_PACK_SHIFT = {ROOM_PACK_SHIFT}\nROOM_PACK = 1 << ROOM_PACK_SHIFT\n")
+        f.write(".room_packs\n")
+        f.write("    EQUW " + ", ".join(f"room_pack_{p}" for p in range(packs)) + "\n")
+        for p in range(packs):
+            f.write(f".room_pack_{p}\n")
+            f.write(f"SECTION RoomPack{p}, transform = \"zx02\"\n")
+            for r in range(p * ROOM_PACK, (p + 1) * ROOM_PACK):
+                a = LAYOUTS + 40 * r
+                f.write("    EQUB " + ",".join(str(b) for b in mem[a:a + 40]) + f"   ; room {r}'s layout\n")
+            for r in range(p * ROOM_PACK, (p + 1) * ROOM_PACK):
+                f.write("    EQUB " + ",".join(str(b) for b in plans[r]) + f"   ; room {r}'s plan\n")
+            f.write("ENDSECTION\n")
         f.write(f"BANK_LIST_MAX = {longest}\n")
     write("roomdata.6502", roomdata)
 
