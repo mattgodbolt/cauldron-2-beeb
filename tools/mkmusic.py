@@ -15,9 +15,8 @@ Writes, under labels src/sound.6502 uses:
     = 48 P / 7, rounded;
   - where N is over the SN's ten bits (below its lowest note), the bass
     instead: a half-cycle in microseconds (P * 96 / 3.5) for the VIA
-    timer that switches the channel's volume, and how many half-cycles a
-    tick sounds for (the original's 2.11 frames: 1536 iterations of the
-    loop, 147456 T-states).
+    timer that switches the channel's volume for as long as the note
+    holds (decisions 12 and 18).
 """
 import argparse
 import os
@@ -27,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import zxmusic  # noqa: E402
 
 SN_MAX = 1023                   # the SN76489's ten bits
-TICK_T = 6 * 256 * 96           # a sounding tick: (256 - tempo 250) * 256 iterations of 96 T
 CLOCK = 3500000
 # The tunes in the order sound.6502 indexes them: its X 0, 1, 2 are the
 # players at 50100, 51400, 51850.
@@ -63,31 +61,22 @@ def main():
     lines.append(f"\\ The period table ({tunes[0].table}), by note + 12.")
     lines.append(".mus_periods")
     lines.append(equb(table, 18))
-    sn, half, edges, bass = [], [], [], []
+    sn, half = [], []
     for p in table:
         n = sn_period(p)
         if p == 1:
             sn.append(0)
             half.append(0)
-            edges.append(0)
-            bass.append(0)
         elif n > SN_MAX:
             sn.append(1)
             half.append(half_us(p))
-            # The half-cycles in a tick's sounding time, P * 2 * 96 T each.
-            edges.append(TICK_T // (p * 96))
-            bass.append(1)
         else:
             sn.append(n)
             half.append(0)
-            edges.append(0)
-            bass.append(0)
-    assert max(edges) < 256
     lines.append("\\ What each entry plays: the SN's period (0 the rest, 1 the bass's),")
-    lines.append("\\ the bass's half-cycle in microseconds and its half-cycles a tick.")
+    lines.append("\\ the bass's half-cycle in microseconds.")
     for name, vals in (("mus_sn_lo", [v & 255 for v in sn]), ("mus_sn_hi", [v >> 8 for v in sn]),
-                       ("mus_half_lo", [v & 255 for v in half]), ("mus_half_hi", [v >> 8 for v in half]),
-                       ("mus_edges", edges)):
+                       ("mus_half_lo", [v & 255 for v in half]), ("mus_half_hi", [v >> 8 for v in half])):
         lines.append(f".{name}")
         lines.append(equb(vals, 18))
     lines.append(f"MUS_ENTRIES = {len(table)}")
