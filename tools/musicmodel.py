@@ -5,18 +5,18 @@
 
 From tools/zxmusic.py's decode of the original's tunes (itself checked
 against the original's speaker, docs/research/sound.md), the notes each
-SN channel should strike, tick by tick, when the tune starts on a frame
-and is stepped once a frame (decision 12):
+SN channel should play when the tune starts on a frame and is stepped
+once a frame (decisions 12 and 18):
 
 - a tick every 3 frames, 2 when both channels rest;
-- a channel's note, unless it rests: a tone at the SN period
-  tools/mkmusic.py gives it, sounding 2 frames; or below the SN's lowest,
-  the bass: period 1, its volume on then switched at each half-cycle
-  (microseconds), for the tick's half-cycles, ending off;
+- a channel's note held from the tick it starts until its stream changes
+  (a run of the same note is one note; a rest is silence): a tone at the
+  SN period tools/mkmusic.py gives it; or below the SN's lowest, the bass:
+  period 1, its volume switched at each half-cycle (microseconds);
 - and the effects' pulses: effect n's width in microseconds.
 
-Prints JSON: per tune, per channel, the notes {frame, period, half,
-edges} that start in the tune's first `frames` frames.
+Prints JSON: per tune, per channel, the notes {frame, frames, period,
+half} that start in the tune's first `frames` frames.
 """
 import argparse
 import json
@@ -36,23 +36,25 @@ PULSES = [0, 20, 30, 50, 67, 83]
 
 def notes(tune, frames):
     out = [[], []]
+    held = [None, None]
     f = 0
     ticks = tune.ticks()
     i = 0
     while f < frames:
         p1, p2, length = ticks[i % len(ticks)]
         for c, p in enumerate((p1, p2)):
+            if p == held[c]:
+                if p != 1:
+                    out[c][-1]["frames"] += length
+                continue
+            held[c] = p
             if p == 1:
                 continue
             n = mkmusic.sn_period(p)
             if n > mkmusic.SN_MAX:
-                # Its volume switches at each half-cycle's end but the
-                # last, where it stops: after an even number it's off already.
-                halves = mkmusic.TICK_T // (p * 96)
-                out[c].append({"frame": f, "period": 1, "half": mkmusic.half_us(p),
-                               "edges": halves - (1 - halves % 2)})
+                out[c].append({"frame": f, "frames": length, "period": 1, "half": mkmusic.half_us(p)})
             else:
-                out[c].append({"frame": f, "period": n, "half": 0, "edges": 1})
+                out[c].append({"frame": f, "frames": length, "period": n, "half": 0})
         f += length
         i += 1
     return out

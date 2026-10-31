@@ -1,17 +1,19 @@
 \ ***************************************************************************
-\ Sound: the music and effects on the SN76489 (decisions 12 and 13).
+\ Sound: the music and effects on the SN76489 (decisions 12, 13 and 18).
 \
 \ The original is a beeper: three copies of one two-channel music player
 \ (50100, 51400, 51850), stepped by the frame interrupt (57664) through
 \ the table at 64019 while 24002 isn't 0, and one effect, a single speaker
-\ pulse (52854), that every sound effect is a train of. Its decisions,
-\ kept here:
+\ pulse (52854), that every sound effect is a train of.
 \
 \ - A tick plays both channels' next notes from the original's streams
-\   (tools/mkmusic.py copies them). A sounding tick takes 2.11 frames with
-\   the interrupts off, so the next starts on the third frame; a tick
-\   where both channels rest, on the second. Every note is struck again
-\   each tick: it sounds for two frames of its three and stops for one.
+\   (tools/mkmusic.py copies them), at the original's tempo: a sounding
+\   tick takes 2.11 frames with the interrupts off, so the next starts on
+\   the third frame; a tick where both channels rest, on the second.
+\ - The tunes as they're written (decision 18), not as the beeper chops
+\   them: each voice on its own channel, a note held from the tick it
+\   starts to the tick its stream changes (a rest is silence), struck at
+\   SN_LOUD and settling a step a frame to MUS_SUSTAIN.
 \ - The SN's period for a note is the beeper's pitch (mkmusic.py). Notes
 \   below the SN's lowest are bass (decision 12): the channel's period 1,
 \   which the ear doesn't hear, its volume switched each half-cycle by a
@@ -45,8 +47,9 @@ SV_T2 = &20
 \ then its high six; a volume %1cc1 and the attenuation.
 SN_TONE  = &80
 SN_VOL   = &90
-SN_LOUD  = 0                    ; the beeper's one level
+SN_LOUD  = 0                    ; the pulses' level, and a note's strike
 SN_OFF   = 15
+MUS_SUSTAIN = 3                 ; a held note's level, from its strike a step a frame
 SN_PULSE = 2                    ; the pulses' channel
 NOTE_END = 64                   ; a stream's end (the original's)
 REST_P   = 1                    ; the period table's rest
@@ -75,6 +78,8 @@ T2_EXTRA = 35
     ASSERT LO(mus_old_irq) <> &FF   ; (JMP (mus_old_irq))
 .mus_k          EQUB 0          ; a stream: the tune * 2 + its channel
 .mus_note       EQUB 0, 0       ; each channel's table entry this tick
+.mus_cur        EQUB &FF, &FF   ; ... and the one it sounds (&FF none)
+.mus_level      EQUB SN_OFF, SN_OFF ; its attenuation while it sounds
 \ The streams' places, tune * 2 + channel: the note last played.
 .mus_ptr_lo     SKIP 6
 .mus_ptr_hi     SKIP 6
@@ -88,7 +93,6 @@ MUS_TONE = 1
 MUS_BASS = 2
 .bass_half_lo   EQUB 0, 0
 .bass_half_hi   EQUB 0, 0
-.bass_left      EQUB 0, 0       ; half-cycles still to sound
 .bass_phase     EQUB 0, 0       ; 1 while the volume is on
 .bass_bit       EQUB SV_T2, SV_T1
 .bass_t         EQUW 0
@@ -221,21 +225,22 @@ MUS_BASS = 2
     LDA mus_start1_hi,X : SBC #0 : STA mus_ptr_hi,Y
     LDA mus_start2_lo,X : SEC : SBC #1 : STA mus_ptr_lo+1,Y
     LDA mus_start2_hi,X : SBC #0 : STA mus_ptr_hi+1,Y
+    LDA #&FF : STA mus_cur : STA mus_cur+1  ; (its first notes struck)
     JSR mus_tick
     PLP
     JMP mus_return
 }
 
-\ The frame's step: the tick's notes stop after two of its frames, and the
-\ next tick comes when it's due.
+\ The frame's step: the notes settle, and the next tick comes when it's
+\ due.
 .mus_frame
 {
     LDA vsyncs : STA mus_seen
+    TXA : PHA
+    JSR mus_settle
+    PLA : TAX
     LDA mus_wait : BEQ tick         ; (stepped before it started)
-    DEC mus_wait : BEQ tick
-    LDA mus_wait : CMP #1 : BNE mus_return
-    JSR mus_tones_off
-    JMP mus_return
+    DEC mus_wait : BNE mus_return
 .tick
     JSR mus_tick
 }
@@ -244,7 +249,7 @@ MUS_BASS = 2
     RTS
 
 \ One tick of tune X: each channel's next note; both resting, two frames
-\ of silence, else three, two of them sounding. X kept.
+\ to the next tick, else three. X kept.
 .mus_tick
 {
     JSR mus_install
@@ -300,11 +305,14 @@ MUS_BASS = 2
     RTS
 }
 
-\ SN channel X plays its note this tick (mus_note,X): silent, a tone, or
-\ the bass. X kept.
+\ SN channel X plays its note this tick (mus_note,X): the one it sounds
+\ held, or a new one struck: silent, a tone, or the bass. X kept.
 .mus_play
 {
+    LDA mus_note,X : CMP mus_cur,X : BEQ held
+    STA mus_cur,X
     JSR bass_stop
+    LDA #SN_LOUD : STA mus_level,X
     LDY mus_note,X
     LDA mus_sn_hi,Y : BNE tone
     LDA mus_sn_lo,Y : BEQ rest
@@ -316,13 +324,14 @@ MUS_BASS = 2
     JSR sn_tone
     LDA #MUS_TONE : STA mus_on,X
     LDA #SN_LOUD : JMP sn_volume
+.held
+    RTS
 .rest
     LDA #MUS_OFF : STA mus_on,X
     LDA #SN_OFF : JMP sn_volume
 .bass
     LDA mus_half_lo,Y : STA bass_half_lo,X
     LDA mus_half_hi,Y : STA bass_half_hi,X
-    LDA mus_edges,Y : STA bass_left,X
     LDA #1 : STA bass_phase,X
     LDA #1 : LDY #0 : JSR sn_tone   ; (the period the ear doesn't hear)
     LDA #MUS_BASS : STA mus_on,X
@@ -346,14 +355,20 @@ MUS_BASS = 2
     RTS
 }
 
-\ The tick's tones stop (the bass stops itself, after its half-cycles).
-.mus_tones_off
+\ Each sounding note a step quieter, to MUS_SUSTAIN: a tone's volume
+\ now, a bass's now if it's on, else at its next edge.
+.mus_settle
 {
     LDX #1
 .channel
-    LDA mus_on,X : CMP #MUS_TONE : BNE next
-    LDA #MUS_OFF : STA mus_on,X
-    LDA #SN_OFF : JSR sn_volume
+    LDA mus_on,X : BEQ next
+    ASSERT MUS_OFF = 0
+    LDA mus_level,X : CMP #MUS_SUSTAIN : BCS next
+    ADC #1 : STA mus_level,X
+    LDY mus_on,X : CPY #MUS_TONE : BEQ write
+    LDY bass_phase,X : BEQ next
+.write
+    JSR sn_volume
 .next
     DEX : BPL channel
     RTS
@@ -379,6 +394,7 @@ MUS_BASS = 2
 .channel
     JSR bass_stop
     LDA #MUS_OFF : STA mus_on,X
+    LDA #&FF : STA mus_cur,X
     LDA #SN_OFF : JSR sn_volume
     DEX : BPL channel
     LDA mus_installed : BEQ done
@@ -449,19 +465,16 @@ MUS_BASS = 2
     RTI
 }
 
-\ Channel X's bass at an edge: its volume to the other level, or at the
-\ end of its last half-cycle, stopped.
+\ Channel X's bass at an edge: its volume to the other level. (It runs
+\ until its note ends: mus_play's bass_stop.)
 .bass_edge
 {
     LDA mus_on,X : CMP #MUS_BASS : BNE done
-    DEC bass_left,X : BEQ last
     LDA bass_phase,X : EOR #1 : STA bass_phase,X
     BEQ off
-    LDA #SN_LOUD : JMP sn_volume
+    LDA mus_level,X : JMP sn_volume
 .off
     LDA #SN_OFF : JMP sn_volume
-.last
-    JMP bass_stop
 .done
     RTS
 }
