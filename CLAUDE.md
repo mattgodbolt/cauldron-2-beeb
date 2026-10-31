@@ -1,9 +1,31 @@
 # CAULDRON II (BBC Micro port): notes for Claude Code
 
 A port of Palace Software's *Cauldron II: The Pumpkin Strikes Back* (ZX
-Spectrum 48K, 1986) to the BBC Micro. Nothing is built yet: start with
-`BRIEF.md`, which says what's known, what to read
-(`../porting-to-the-beeb.md` first) and what to ask Matt.
+Spectrum 48K, 1986) to the BBC Micro. `BRIEF.md` is where it started;
+`docs/how-it-works.md` holds the transcription's conventions (zNNNNN,
+aNNNNN, the registers in zero page, `zx_read`), `docs/research/*.md` the
+original, `docs/decisions.md` every deviation, `docs/journal.md` the
+story.
+
+## Commands
+
+```sh
+make venv / make fetch / make zx   # tools, the original, build/c2.z80
+make            # build/cauldron2.ssd (+ .json symbols, listing.txt)
+make run        # boot in jsbeeb, shots/run.png
+make check      # every check (MODEL=Master for a Master 128)
+make disc       # from a clean tree: cauldron2.ssd at the root
+make disasm     # build/c2.skool from disasm/*.ctl
+```
+
+- `.venv/bin/python tools/zx.py '<script>' shots/zx_` runs the original;
+  `node tools/play.mjs '<script>' shots/p_` the port (same script
+  language; their docstrings). A game starts on the original with
+  `2,1:tap,1,4:tap,4,KF:0.3`.
+- `.venv/bin/python tools/zxrooms.py` has the original draw every room
+  (`build/zxrooms/`): the drawing's oracle.
+- The build lists the original's routines not yet transcribed (stubs that
+  stop at `unwritten`).
 
 As the port takes shape, this file gathers the gotchas met, as
 `../cauldron-beeb/CLAUDE.md` does.
