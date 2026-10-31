@@ -82,11 +82,14 @@ perturbing it until every instruction of the original's had run.
 
 ## Sound
 
-The original's music is a two-channel beeper player; on the SN76489
-each note is a tone, at the original's tempo and articulation. The notes
-below the SN's lowest are a software bass, the channel's volume switched
-each half-cycle by the System VIA's timers, so the bass lines keep their
-pitch (decision 12). The effects were single speaker pulses, and are
+The original's music is a two-channel beeper player, which has to
+strike every note again each tick to share one speaker. On the SN76489
+each voice has a channel of its own, so the tunes play as written: a
+held note is held, legato, with a short decay from its attack, at the
+original's tempo and pitch (decisions 12 and 18). The notes below the
+SN's lowest are a software bass, the channel's volume switched each
+half-cycle by the System VIA's timers, so the bass lines keep their
+pitch. The effects were single speaker pulses, and are
 here too: the same pulse train on an SN channel, so they click as the
 original's did (decision 13).
 
