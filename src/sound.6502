@@ -1,3 +1,646 @@
 \ ***************************************************************************
-\ Sound: the music and effects on the SN76489.
+\ Sound: the music and effects on the SN76489 (decisions 6 and 7).
+\
+\ The original is a beeper: three copies of one two-channel music player
+\ (50100, 51400, 51850), stepped by the frame interrupt (57664) through
+\ the table at 64019 while 24002 isn't 0, and one effect, a single speaker
+\ pulse (52854), that every sound effect is a train of. Its decisions,
+\ kept here:
+\
+\ - A tick plays both channels' next notes from the original's streams
+\   (tools/mkmusic.py copies them). A sounding tick takes 2.11 frames with
+\   the interrupts off, so the next starts on the third frame; a tick
+\   where both channels rest, on the second. Every note is struck again
+\   each tick: it sounds for two frames of its three and stops for one.
+\ - The SN's period for a note is the beeper's pitch (mkmusic.py). Notes
+\   below the SN's lowest are bass (decision 6): the channel's period 1,
+\   which the ear doesn't hear, its volume switched each half-cycle by a
+\   System VIA timer, as the beeper switches its speaker.
+\ - A pulse is the same on the SN (decision 7): channel 2 at period 1,
+\   its volume on for the pulse's width, then off, timed by a loop as the
+\   original's is.
+\
+\ Channels: the tunes' channel 1 on SN 0 (its bass on the System VIA's
+\ T2, one-shot), channel 2 on SN 1 (T1, free-running), the pulses on SN 2.
+\
+\ None of it uses zero page: the steps are called from the interrupt, the
+\ pulses from anywhere.
 \ ***************************************************************************
+
+INCLUDE "../build/data/music.6502"
+
+\ The System VIA's timers (the OS's clock and speech, idle here).
+sv_t1cl = sysvia_orb + 4        ; reading it acknowledges T1
+sv_t1ch = sysvia_orb + 5        ; writing it starts T1 from the latches
+sv_t1ll = sysvia_orb + 6
+sv_t1lh = sysvia_orb + 7
+sv_t2cl = sysvia_orb + 8        ; reading it acknowledges T2
+sv_t2ch = sysvia_orb + 9        ; writing it starts T2
+sv_acr  = sysvia_orb + 11
+\ Each music channel's timer: its bit in the IFR and IER.
+SV_T1 = &40
+SV_T2 = &20
+
+\ The SN76489's bytes: a tone's period is %1cc0 and its low four bits,
+\ then its high six; a volume %1cc1 and the attenuation.
+SN_TONE  = &80
+SN_VOL   = &90
+SN_LOUD  = 0                    ; the beeper's one level
+SN_OFF   = 15
+SN_PULSE = 2                    ; the pulses' channel
+NOTE_END = 64                   ; a stream's end (the original's)
+REST_P   = 1                    ; the period table's rest
+
+\ A T1 period is its latches plus this many microseconds (free-running).
+T1_EXTRA = 2
+\ A one-shot T2 started again at an edge loses this many microseconds
+\ between reading its count and writing the next (tools/musiccheck.mjs
+\ checks the half-cycles' spacing).
+T2_EXTRA = 35
+\ An edge's write reaches the chip this many microseconds after its timer
+\ (the OS's entry, mus_irq, sn_write up to its strobe), so the first
+\ half-cycle, from the strike's write, is timed that much shorter: per
+\ channel, T2's edge (channel 0) the longer way through mus_irq.
+.edge_late  EQUB 205, 150
+
+\ ---------------------------------------------------------------------------
+\ The variables (in the code, which is RAM).
+
+.snd_ready      EQUB 0          ; sound_init has run
+.sfx_busy       EQUB 0          ; a pulse from the main program holds the chip
+.mus_wait       EQUB 0          ; frames to the next tick
+.mus_seen       EQUB 0          ; vsyncs when the music was last stepped
+.mus_installed  EQUB 0          ; mus_irq is on IRQ1V
+.mus_old_irq    EQUW 0          ; ... and what was
+    ASSERT LO(mus_old_irq) <> &FF   ; (JMP (mus_old_irq))
+.mus_k          EQUB 0          ; a stream: the tune * 2 + its channel
+.mus_note       EQUB 0, 0       ; each channel's table entry this tick
+\ The streams' places, tune * 2 + channel: the note last played.
+.mus_ptr_lo     SKIP 6
+.mus_ptr_hi     SKIP 6
+\ Per SN channel 0-2: its period as last written (&FFFF unknown), what it
+\ plays (MUS_OFF, MUS_TONE, MUS_BASS), and the bass's state.
+.sn_lo          EQUB &FF, &FF, &FF
+.sn_hi          EQUB &FF, &FF, &FF
+.mus_on         EQUB 0, 0
+MUS_OFF  = 0
+MUS_TONE = 1
+MUS_BASS = 2
+.bass_half_lo   EQUB 0, 0
+.bass_half_hi   EQUB 0, 0
+.bass_left      EQUB 0, 0       ; half-cycles still to sound
+.bass_phase     EQUB 0, 0       ; 1 while the volume is on
+.bass_bit       EQUB SV_T2, SV_T1
+.bass_t         EQUW 0
+
+\ ---------------------------------------------------------------------------
+\ The chip.
+
+\ A to the chip, through the System VIA's slow bus, with port A put back
+\ as it was found: an interrupt may have stopped key_down (system.6502)
+\ between its writes. The keyboard goes on auto-scan while the byte is
+\ written, or it drives port A's bit 7. Interrupts stay off throughout.
+\ X kept.
+.sn_write
+{
+    PHP : SEI
+    TAY
+    LDA sysvia_ddra : PHA
+    LDA sysvia_ora_nh : PHA
+    LDA #&0B : STA sysvia_orb       ; the keyboard on auto-scan
+    LDA #&FF : STA sysvia_ddra
+    STY sysvia_ora_nh
+    LDA #0 : STA sysvia_orb         ; the chip's write enable low
+    LDY #3                          ; ... for 8us
+.hold
+    DEY : BNE hold
+    LDA #8 : STA sysvia_orb         ; ... and high
+    PLA : STA sysvia_ora_nh
+    PLA : STA sysvia_ddra
+    CMP #&7F : BNE done             ; (key_down's: the keyboard back on port A)
+    LDA #3 : STA sysvia_orb
+.done
+    PLP
+    RTS
+}
+
+\ Channel X's volume: A the attenuation. X kept.
+.sn_volume
+    STA sn_tmp
+    TXA : ASL A : ASL A : ASL A : ASL A : ASL A
+    ORA #SN_VOL : ORA sn_tmp
+    JMP sn_write
+.sn_tmp EQUB 0
+
+\ Channel X's period to A (low) and Y (high), if it isn't that already.
+\ (Called with interrupts off: an interrupt's write between the two bytes
+\ would take the second.) X kept.
+.sn_tone
+{
+    STY sn_tmp
+    CMP sn_lo,X : BNE write
+    LDY sn_hi,X : CPY sn_tmp : BEQ done
+.write
+    STA sn_lo,X
+    LDA sn_tmp : STA sn_hi,X
+    LDA sn_lo,X : AND #15 : STA sn_tmp
+    TXA : ASL A : ASL A : ASL A : ASL A : ASL A
+    ORA #SN_TONE : ORA sn_tmp
+    JSR sn_write
+    \ The high six bits: the period shifted right by four.
+    LDA sn_hi,X : STA sn_tmp
+    LDA sn_lo,X
+    LSR sn_tmp : ROR A : LSR sn_tmp : ROR A
+    LSR A : LSR A
+    JMP sn_write
+.done
+    RTS
+}
+
+\ Everything silent and the pulses' channel at period 1, once. X kept.
+.sound_init
+{
+    LDA snd_ready : BNE done
+    TXA : PHA
+    PHP : SEI
+    LDA #SN_VOL OR SN_OFF : JSR sn_write
+    LDA #SN_VOL OR &20 OR SN_OFF : JSR sn_write
+    LDA #SN_VOL OR &40 OR SN_OFF : JSR sn_write
+    LDA #SN_VOL OR &60 OR SN_OFF : JSR sn_write
+    LDX #SN_PULSE : LDA #1 : LDY #0 : JSR sn_tone
+    \ The System VIA's T1 free-running, T2 one-shot, their interrupts off.
+    LDA #SV_T1 OR SV_T2 : STA sysvia_ier
+    LDA sv_acr : AND #&1F : ORA #&40 : STA sv_acr
+    INC snd_ready
+    PLP
+    PLA : TAX
+.done
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ The music: the three players' entries. Each keeps X and Y.
+
+\ Restart tune 1 (title, menu, credits) and play its first tick.
+.z50100
+    PHA : TXA : PHA : TYA : PHA
+    LDX #0 : BEQ mus_start          ; (always)
+\ Tune 2 (the win).
+.z51400
+    PHA : TXA : PHA : TYA : PHA
+    LDX #1 : BNE mus_start          ; (always)
+\ Tune 3 (game over).
+.z51850
+    PHA : TXA : PHA : TYA : PHA
+    LDX #2 : BNE mus_start          ; (always)
+    ZA_UNREACHABLE
+
+\ The interrupt's step for tune 1 (57664 through 64019, while 24002 is 1),
+\ once a frame.
+.z50113
+    PHA : TXA : PHA : TYA : PHA
+    LDX #0 : BEQ mus_frame          ; (always)
+\ Tune 2's (24002 = 3).
+.z51413
+    PHA : TXA : PHA : TYA : PHA
+    LDX #1 : BNE mus_frame          ; (always)
+\ Tune 3's (24002 = 2).
+.z51863
+    PHA : TXA : PHA : TYA : PHA
+    LDX #2 : BNE mus_frame          ; (always)
+    ZA_UNREACHABLE
+
+\ Tune X from its start (the original's pointers to the byte before its
+\ streams), its first tick now.
+.mus_start
+{
+    PHP : SEI
+    JSR sound_init
+    TXA : ASL A : TAY               ; (channel 1's stream; channel 2's after)
+    LDA mus_start1_lo,X : SEC : SBC #1 : STA mus_ptr_lo,Y
+    LDA mus_start1_hi,X : SBC #0 : STA mus_ptr_hi,Y
+    LDA mus_start2_lo,X : SEC : SBC #1 : STA mus_ptr_lo+1,Y
+    LDA mus_start2_hi,X : SBC #0 : STA mus_ptr_hi+1,Y
+    JSR mus_tick
+    PLP
+    JMP mus_return
+}
+
+\ The frame's step: the tick's notes stop after two of its frames, and the
+\ next tick comes when it's due.
+.mus_frame
+{
+    LDA vsyncs : STA mus_seen
+    LDA mus_wait : BEQ tick         ; (stepped before it started)
+    DEC mus_wait : BEQ tick
+    LDA mus_wait : CMP #1 : BNE mus_return
+    JSR mus_tones_off
+    JMP mus_return
+.tick
+    JSR mus_tick
+}
+.mus_return
+    PLA : TAY : PLA : TAX : PLA
+    RTS
+
+\ One tick of tune X: each channel's next note; both resting, two frames
+\ of silence, else three, two of them sounding. X kept.
+.mus_tick
+{
+    JSR mus_install
+    LDA vsyncs : STA mus_seen
+    TXA : ASL A : STA mus_k
+    JSR mus_next : STA mus_note
+    INC mus_k
+    JSR mus_next : STA mus_note+1
+    LDY mus_note : LDA mus_periods,Y : CMP #REST_P : BNE sounding
+    LDY mus_note+1 : LDA mus_periods,Y : CMP #REST_P : BNE sounding
+    LDA #2 : STA mus_wait
+    BNE channels                    ; (always: plays both rests)
+.sounding
+    LDA #3 : STA mus_wait
+.channels
+    TXA : PHA
+    LDX #0 : JSR mus_play
+    LDX #1 : JSR mus_play
+    PLA : TAX
+    RTS
+}
+
+\ Stream mus_k's next note as its table entry (note + 12): the original's
+\ 50136, which goes back to the stream's start at its end.
+.mus_next
+{
+    TXA : PHA
+    LDX mus_k
+    INC mus_ptr_lo,X : BNE fetch
+    INC mus_ptr_hi,X
+.fetch
+    LDA mus_ptr_lo,X : STA load+1
+    LDA mus_ptr_hi,X : STA load+2
+.load
+    LDA &FFFF
+    CMP #NOTE_END : BNE note
+    \ the end: the stream's start (its loop address, 50129)
+    TXA : LSR A : TAY
+    BCS second
+    LDA mus_start1_lo,Y : STA mus_ptr_lo,X
+    LDA mus_start1_hi,Y : STA mus_ptr_hi,X
+    JMP fetch
+.second
+    LDA mus_start2_lo,Y : STA mus_ptr_lo,X
+    LDA mus_start2_hi,Y : STA mus_ptr_hi,X
+    JMP fetch
+.note
+    CLC : ADC #12
+    ASSERT MUS_ENTRIES <= 128
+    TAY
+    PLA : TAX
+    TYA
+    RTS
+}
+
+\ SN channel X plays its note this tick (mus_note,X): silent, a tone, or
+\ the bass. X kept.
+.mus_play
+{
+    JSR bass_stop
+    LDY mus_note,X
+    LDA mus_sn_hi,Y : BNE tone
+    LDA mus_sn_lo,Y : BEQ rest
+    CMP #1 : BEQ bass
+.tone
+    LDA mus_sn_lo,Y : PHA
+    LDA mus_sn_hi,Y : TAY
+    PLA
+    JSR sn_tone
+    LDA #MUS_TONE : STA mus_on,X
+    LDA #SN_LOUD : JMP sn_volume
+.rest
+    LDA #MUS_OFF : STA mus_on,X
+    LDA #SN_OFF : JMP sn_volume
+.bass
+    LDA mus_half_lo,Y : STA bass_half_lo,X
+    LDA mus_half_hi,Y : STA bass_half_hi,X
+    LDA mus_edges,Y : STA bass_left,X
+    LDA #1 : STA bass_phase,X
+    LDA #1 : LDY #0 : JSR sn_tone   ; (the period the ear doesn't hear)
+    LDA #MUS_BASS : STA mus_on,X
+    LDA #SN_LOUD : JSR sn_volume    ; (heard first)
+    \ The first half-cycle less an edge's latency (the strike's write
+    \ is done; an edge's comes that long after its timer)
+    LDA bass_half_lo,X : SEC : SBC edge_late,X : STA bass_t
+    LDA bass_half_hi,X : SBC #0 : STA bass_t+1
+    TXA : BEQ start_t2
+    \ T1, free-running: the first from the count, the rest from the latches
+    LDA bass_t : STA sv_t1ll
+    LDA bass_t+1 : STA sv_t1ch      ; (the latches into the count: it starts)
+    LDA bass_half_lo+1 : SEC : SBC #T1_EXTRA : STA sv_t1ll
+    LDA bass_half_hi+1 : SBC #0 : STA sv_t1lh
+    JMP enable
+.start_t2
+    LDA bass_t : STA sv_t2cl
+    LDA bass_t+1 : STA sv_t2ch      ; (starts it)
+.enable
+    LDA bass_bit,X : ORA #&80 : STA sysvia_ier
+    RTS
+}
+
+\ The tick's tones stop (the bass stops itself, after its half-cycles).
+.mus_tones_off
+{
+    LDX #1
+.channel
+    LDA mus_on,X : CMP #MUS_TONE : BNE next
+    LDA #MUS_OFF : STA mus_on,X
+    LDA #SN_OFF : JSR sn_volume
+.next
+    DEX : BPL channel
+    RTS
+}
+
+\ Channel X's bass stopped, if it's playing: its timer's interrupt off,
+\ its volume off. X kept.
+.bass_stop
+{
+    LDA mus_on,X : CMP #MUS_BASS : BNE done
+    LDA bass_bit,X : STA sysvia_ier
+    LDA #MUS_OFF : STA mus_on,X
+    LDA #SN_OFF : JMP sn_volume
+.done
+    RTS
+}
+
+\ Everything the music plays stops, and mus_irq comes off IRQ1V: the
+\ interrupt stopped stepping it (24002 went to 0).
+.mus_stop
+{
+    LDX #1
+.channel
+    JSR bass_stop
+    LDA #MUS_OFF : STA mus_on,X
+    LDA #SN_OFF : JSR sn_volume
+    DEX : BPL channel
+    LDA mus_installed : BEQ done
+    LDA mus_old_irq : STA irq1v
+    LDA mus_old_irq+1 : STA irq1v+1
+    LDA #0 : STA mus_installed
+.done
+    RTS
+}
+
+\ mus_irq onto IRQ1V, ahead of irq_handler, while the music plays.
+\ (Called with interrupts off.)
+.mus_install
+{
+    LDA mus_installed : BNE done
+    LDA irq1v : STA mus_old_irq
+    LDA irq1v+1 : STA mus_old_irq+1
+    LDA #LO(mus_irq) : STA irq1v
+    LDA #HI(mus_irq) : STA irq1v+1
+    INC mus_installed
+.done
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ The music's own interrupts, ahead of irq_handler: the bass's edges, and
+\ at VSync a watch on the steps. 57664 steps the tune only while 24002
+\ isn't 0, so when the game sets it to 0 nothing would stop the notes: a
+\ VSync with no step since the one before last and the music stops
+\ (mus_stop). (This runs before irq_handler counts the VSync.)
+.mus_irq
+{
+    LDA sysvia_ifr : AND sysvia_ier : AND #SV_T1 OR SV_T2 : BNE edges
+    LDA sysvia_ifr : AND #2 : BEQ chain         ; (VSync: irq_handler acknowledges it)
+    LDA vsyncs : SEC : SBC mus_seen
+    CMP #2 : BCC chain
+    TXA : PHA : TYA : PHA
+    JSR mus_stop
+    PLA : TAY : PLA : TAX
+.chain
+    JMP (mus_old_irq)
+    ZA_CANJUMP irq_handler
+.edges
+    TXA : PHA : TYA : PHA
+    LDA sysvia_ifr : AND sysvia_ier : AND #SV_T1 : BEQ not_t1
+    LDA sv_t1cl                                 ; (acknowledges it: it runs on)
+    LDX #1 : JSR bass_edge
+.not_t1
+    LDA sysvia_ifr : AND sysvia_ier : AND #SV_T2 : BEQ done
+    \ T2 again for the next half-cycle, less the time since this one
+    \ ended: it counts on past 0, so adding its count takes off however
+    \ late the interrupt was.
+.read
+    LDA sv_t2ch : STA bass_t+1
+    LDA sv_t2cl : STA bass_t                    ; (acknowledges it)
+    LDA sv_t2ch : CMP bass_t+1 : BNE read       ; (the low byte went past 0 meanwhile)
+    LDA bass_t : CLC : ADC bass_half_lo : STA bass_t
+    LDA bass_t+1 : ADC bass_half_hi : STA bass_t+1
+    LDA bass_t : SEC : SBC #T2_EXTRA : STA sv_t2cl
+    LDA bass_t+1 : SBC #0 : STA sv_t2ch         ; (starts it)
+    LDX #0 : JSR bass_edge
+.done
+    PLA : TAY : PLA : TAX
+    LDA &FC                                     ; (the OS saved A here)
+    RTI
+}
+
+\ Channel X's bass at an edge: its volume to the other level, or at the
+\ end of its last half-cycle, stopped.
+.bass_edge
+{
+    LDA mus_on,X : CMP #MUS_BASS : BNE done
+    DEC bass_left,X : BEQ last
+    LDA bass_phase,X : EOR #1 : STA bass_phase,X
+    BEQ off
+    LDA #SN_LOUD : JMP sn_volume
+.off
+    LDA #SN_OFF : JMP sn_volume
+.last
+    JMP bass_stop
+.done
+    RTS
+}
+
+\ ---------------------------------------------------------------------------
+\ The effects.
+
+\ 52781: start a sweep. HL = its descriptor (64010 the bounce, 64014
+\ collecting): records of first, last, step, then 255.
+.z52781
+    PHP : SEI
+    LDA rl : STA a24003 : LDA rh : STA a24003+1
+    LDY #0 : LDA (rhl),Y : STA a24005
+    PLP
+    RTS
+
+\ 52791: the sweep's next pulse, once a pass of the main loop. Leaves HL
+\ the record (0 with A = 0 and Z set if there's no sweep), IX the record
+\ the sweep goes on with, A the next effect number.
+.z52791
+{
+    LDA a24003 : STA rl
+    LDA a24003+1 : STA rh
+    ORA rl : BNE playing
+    RTS
+.playing
+    LDA rl : STA rixl : LDA rh : STA rixh
+    LDA a24005 : PHA
+    JSR z52854
+    PLA
+    LDY #2 : CLC : ADC (rix),Y      ; advance by the step
+    STA a24005
+    LDY #0 : CMP (rix),Y : BCC leaves       ; below first
+    INY : CMP (rix),Y : BCC inside : BEQ inside
+.leaves
+    LDY #3 : LDA (rix),Y : CMP #255 : BEQ over
+    \ the next record, from its first number
+    LDA #3 : STA re : LDA #0 : STA rd
+    LDA rixl : CLC : ADC #3 : STA rixl : STA a24003
+    LDA rixh : ADC #0 : STA rixh : STA a24003+1
+    LDY #0 : LDA (rix),Y : STA a24005
+.inside
+    RTS
+.over
+    LDA #0 : STA rl : STA rh : STA a24003 : STA a24003+1
+    RTS
+}
+
+\ 52854: one pulse, A the effect number (its width at 64027). From the
+\ main program: the pulse holds the chip (sfx_busy). X and Y kept, as is
+\ HL.
+.z52854
+{
+    STX pulse_x : STY pulse_y
+    JSR pulse_width
+    PHP : SEI
+    INC sfx_busy
+    JSR sound_init
+    LDX #SN_PULSE : LDA #SN_LOUD : JSR sn_volume
+    PLP
+    JSR pulse_wait
+    PHP : SEI
+    LDX #SN_PULSE : LDA #SN_OFF : JSR sn_volume
+    DEC sfx_busy
+    PLP
+    LDX pulse_x : LDY pulse_y
+    RTS
+}
+.pulse_x    EQUB 0
+.pulse_y    EQUB 0
+.pulse_n    EQUW 0
+
+\ The width of effect A, as pulse_wait's count: about 4 * v T-states
+\ (v the word at 64027 + 2A) is v * 8 / 7 microseconds; pulse_wait's
+\ loop is 4.5 microseconds a pass, so v * 16 / 63 passes, near enough
+\ v / 4 + v / 256, less the passes the chip's two writes take
+\ (PULSE_WRITES, tools/musiccheck.mjs times the pulses).
+PULSE_WRITES = 14
+.pulse_width
+{
+    ASL A : TAY
+    LDA a64027+1,Y : STA pulse_n+1
+    LDA a64027,Y
+    LSR pulse_n+1 : ROR A
+    LSR pulse_n+1 : ROR A
+    STA pulse_n
+    \ + v / 256 (its high byte) - PULSE_WRITES
+    LDA a64027+1,Y : SEC : SBC #PULSE_WRITES
+    BCS add
+    DEC pulse_n+1                   ; (a borrow)
+.add
+    CLC : ADC pulse_n : STA pulse_n
+    BCC done
+    INC pulse_n+1
+.done
+    RTS
+}
+
+\ Wait pulse_n passes of nine cycles (at 2MHz), as the original's loop
+\ waits, an interrupt lengthening it as one did.
+.pulse_wait
+{
+    LDY pulse_n : LDX pulse_n+1
+    TYA : BEQ pass
+    INX
+.pass
+    NOP : NOP
+    DEY : BNE pass
+    DEX : BNE pass
+    RTS
+}
+
+\ 57714: the interrupt's explosion pulse, A = 24000 (not 0), counted down:
+\ effect 50 + (count AND 31). With sfx_busy held the main program's pulse
+\ has the chip, and this one only takes its time. X and Y kept.
+.z57714
+    SEC : SBC #1 : STA a24000
+    AND #31 : CLC : ADC #50
+\ A pulse of effect A from the interrupt.
+.pulse_irq
+{
+    STX pulse_x : STY pulse_y
+    JSR pulse_width
+    LDA sfx_busy : BNE quiet
+    JSR sound_init
+    LDX #SN_PULSE : LDA #SN_LOUD : JSR sn_volume
+    JSR pulse_wait
+    LDX #SN_PULSE : LDA #SN_OFF : JSR sn_volume
+    JMP done
+.quiet
+    JSR pulse_wait
+.done
+    LDX pulse_x : LDY pulse_y
+    RTS
+}
+
+\ 53798: one pulse of the witches' cackle: effect (24001 - 1) AND 31,
+\ counting down. Keeps every register.
+.z53798
+    PHA
+    LDA a24001 : SEC : SBC #1 : AND #31 : STA a24001
+    JSR z52854
+    PLA
+    RTS
+
+\ ---------------------------------------------------------------------------
+\ The music check's build (tools/musiccheck.mjs): vsync_hook steps the
+\ tune mc_tune as 57664 would, and mc_req (poked by the check) starts
+\ one: 1-3 a tune from its start on this VSync, &80 + n a pulse of effect
+\ n from the interrupt, as 57714 plays one; &FF stops stepping.
+IF DEFINED(MUSICCHECK)
+.mc_tune    EQUB &FF
+.mc_req     EQUB 0
+.mc_hook
+{
+    LDA mc_req : BEQ step
+    LDX #0 : STX mc_req
+    CMP #&FF : BEQ stop
+    CMP #&80 : BCS pulse
+    TAX : DEX : STX mc_tune
+    TXA : BEQ t1
+    CMP #1 : BEQ t2
+    JMP z51850
+.t1
+    JMP z50100
+.t2
+    JMP z51400
+.pulse
+    AND #&7F : JMP pulse_irq
+.stop
+    LDA #&FF : STA mc_tune
+    RTS
+.step
+    LDA mc_tune : BMI none
+    BEQ s1
+    CMP #1 : BEQ s2
+    JMP z51863
+.s1
+    JMP z50113
+.s2
+    JMP z51413
+.none
+    RTS
+}
+ENDIF

@@ -26,12 +26,16 @@ DISC     = cauldron2.ssd
 SOURCES  = $(wildcard src/*.6502)
 # Made from the original by the tools, never committed.
 GENERATED = build/data/title.bin
+# The tunes from the original (tools/mkmusic.py; src/sound.6502), and its
+# tables until tools/mkdata.py places them.
+GENERATED += build/data/music.6502
+MKMUSIC_TABLES = $(if $(wildcard tools/mkdata.py),,--tables)
 # Stamped into !BOOT, so a disc says what it is: UTC build time and the
 # commit, with + if the tree had changes.
 BUILD   := $(shell date -u '+%Y-%m-%d %H:%M UTC') $(shell git rev-parse --short HEAD 2>/dev/null || echo NOGIT)$(shell git diff --quiet HEAD -- . ':(exclude)$(DISC)' 2>/dev/null || echo +)
 
 .DELETE_ON_ERROR:
-.PHONY: all run check disc fetch zx disasm venv clean
+.PHONY: all run check disc fetch zx disasm venv clean music
 
 all: $(TARGET)
 
@@ -48,7 +52,22 @@ build/data/title.scr: original/CauldronII.tap tools/tapblock.py
 build/data/title.bin: build/data/title.scr tools/mkscreen.py
 	python3 tools/mkscreen.py $< $@ --png $(@:.bin=.png)
 
-check: $(TARGET)
+build/data/music.6502: build/c2.z80 tools/mkmusic.py tools/zxmusic.py
+	@mkdir -p build/data
+	$(PYTHON) tools/mkmusic.py $< $@ $(MKMUSIC_TABLES)
+
+# The music check's disc: the tunes stepped by the interrupt as 57664
+# would, with nothing else (src/sound.6502's MUSICCHECK).
+build/musiccheck.ssd: $(SOURCES) $(GENERATED) tools/mksyms.py | build
+	python3 tools/mksyms.py build/syms.6502 build/stubs.6502 $(SOURCES) $(wildcard build/data/*.6502)
+	$(ASM) -D MUSICCHECK=1 -D 'BUILD="$(BUILD) musiccheck"' -o $@ --title CAULDRON2 --opt 3 --warn 2 --symbols $(@:.ssd=.json) src/main.6502
+
+# The music against tools/zxmusic.py's decode of the original's
+# (tools/musicmodel.py), from the chip's bytes in jsbeeb.
+music: build/musiccheck.ssd
+	node tools/musiccheck.mjs
+
+check: $(TARGET) music
 
 # Always from a clean tree, so the stamp names the commit the disc holds.
 disc:
