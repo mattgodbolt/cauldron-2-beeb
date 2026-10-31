@@ -222,3 +222,28 @@ How the port got here, in order: what worked and what didn't.
   idle79 1.071 to 1.070, idle97 1.170 to 1.159, left56 1.068 to 1.050,
   leftright97 1.063 to 1.058, right56 1.078 to 1.056, updown10 1.073
   to 1.067, fuzz2_0 1.092 to 1.053.
+
+## 2026-10-31: the XOR a character row at a time
+
+- With the XOR stubbed out (results then differ) the frames per pass
+  fell to 0.86-1.00 of the original's: the XOR alone can't bring every
+  scenario to 1, but it was the biggest compute (a fifth of idle play).
+- What it's given, read from idle play: three fifths of the image bytes
+  are 0; of the halves of the others, about half land on lit pixels (an
+  erase's) and a quarter are 0; sprites mostly 4 bytes by 42 lines; a
+  character row's block about 7 lines and 1.3 runs of one ink.
+- `xor_seg` takes a character row's lines of a run on one cell row in
+  one call, a sub-run of one ink at a time: the pattern in zero page,
+  toggled a line; each line last byte first, X the image's index and Y
+  16 * the byte + the line, so Y's borrow ends the line; the image and
+  the spread tables' entries are operands set for the sub-run and the
+  byte; a half with nothing to XOR is left. The clipped draw hands the
+  play area's lines of 58931 to `xor_lines` in one call. Runs off their
+  cell row or into the attributes go a byte at a time (`xor_line`); no
+  `make sprites` case reached them, so it now has some (`--edges`).
+- Every check identical. Frames per pass against the original's,
+  2026-10-31, before and after: fire56 1.073 to 1.024,
+  idle110 1.097 to 1.049, idle56 1.087 to 1.043, idle79 1.071 to 1.014,
+  idle97 1.170 to 1.065, left56 1.068 to 1.028, leftright97 1.063 to
+  1.035, right56 1.078 to 1.013, updown10 1.073 to 1.043, fuzz2_0 1.092
+  to 1.027.

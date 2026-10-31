@@ -343,6 +343,12 @@ What `xor_down` keeps from one call to the next (a run's address, its
 row, whether it stayed on its cell row) is fixed zero page (`xr_cache`),
 as it outlives any call.
 
+Later the same day: `xor_down` and `xr_cache` gave way to `xor_seg`
+(and `xor_line`), which take a character row's lines in one call, so
+nothing outlives a call; the XOR's routines in GAMEDATA are now
+`xor_lines`, `xor_line` and `xor_seg` (journal, "the XOR a character row
+at a time").
+
 ## 18. The music as it's written, not as the beeper plays it (2026-10-31, provisional)
 
 Matt asked for the tunes "as intended": the voices on the SN's own

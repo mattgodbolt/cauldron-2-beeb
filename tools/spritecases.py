@@ -3,7 +3,7 @@
 (any slot: 0 and 1 clipped, 2-5 through 57182) or 57194 straight, drawn
 and erased, over a room.
 
-    .venv/bin/python tools/spritecases.py make [--cases 40] [--seed 1]
+    .venv/bin/python tools/spritecases.py make [--cases 40] [--seed 1] [--edges]
     node tools/spritecheck.mjs
     .venv/bin/python tools/spritecases.py cmp
 
@@ -16,6 +16,10 @@ the XOR lights takes the sprite's colour (drawing: its frame's
 attribute EOR 70, or the pumpkin's yellow for slot 0 without one) or
 its cell's scenery ink (erasing, or a frame without colour); one it
 leaves lit keeps its colour; one it clears is black.
+
+--edges: the unclipped draws (57194) also run off the right of their
+cell row and down into the attributes (to the third attribute row at
+most: the original's XOR past them reaches its own variables).
 
 cmp: tools/spritecheck.mjs's dumps (bbc_NNN.bin) against them: lit
 pixels, attributes and colours, every byte. Exits non-zero on any
@@ -67,7 +71,7 @@ def litmask(b):
     return n * 0x11
 
 
-def make_cases(mem, n, seed):
+def make_cases(mem, n, seed, edges=False):
     rnd = random.Random(seed)
     frames = [f for f in range(156) if mem[FRAMES + 4 * f] and mem[FRAMES + 4 * f + 1]]
     cases = []
@@ -82,6 +86,10 @@ def make_cases(mem, n, seed):
                 slot = rnd.randint(2, 5)
                 x = 4 * rnd.randint(0, 31 - w) + rnd.randint(0, 3)
                 y = rnd.randint(0, 192 - h)
+                if edges and rnd.randint(0, 1):
+                    x = 4 * rnd.randint(32 - w, 31) + rnd.randint(0, 3)
+                if edges and rnd.randint(0, 1):
+                    y = rnd.randint(max(0, 192 - h), min(191, 195 - h))
             else:
                 slot = rnd.randint(0, 5)
                 if slot < 2:
@@ -168,12 +176,13 @@ def main():
     ap.add_argument("what", choices=["make", "cmp"])
     ap.add_argument("--cases", type=int, default=40)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--edges", action="store_true", help="unclipped draws off the row's end and into the attributes")
     args = ap.parse_args()
     if args.what == "cmp":
         return compare()
     os.makedirs(OUT, exist_ok=True)
     mem = Spectrum(BASE).mem
-    cases = make_cases(mem, args.cases, args.seed)
+    cases = make_cases(mem, args.cases, args.seed, args.edges)
     for k, case in enumerate(cases):
         run_case(case, k)
     json.dump(cases, open(os.path.join(OUT, "cases.json"), "w"))
