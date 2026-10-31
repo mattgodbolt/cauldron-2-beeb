@@ -494,7 +494,7 @@ ENDMACRO
     LDY #7 : LDA (rix),Y : STA rd
     G_HL a24225
     LDY #15 : LDA (rix),Y
-    JSR z57415
+    JSR preshift_pair                   ; (57415)
     PHA : G_PUSH rde : G_PUSH rbc : G_PUSH rhl
     LDY #10 : LDA (rix),Y : STA re
     LDY #11 : LDA (rix),Y : STA rd

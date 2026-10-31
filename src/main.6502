@@ -301,6 +301,9 @@ PAL_PROG_LEN = 1 + 4 + 2 * MAX_SPLITS + 2 * (MAX_SPLITS + 1)
 .pal_prog       SKIP PAL_PROG_LEN ; the screen's palette program (make_program)
 .split_lines    SKIP MAX_SPLITS ; ... its splits' lines
 .pat_q          SKIP 4          ; make_patterns' row: logical 1-3 at +1
+.ps_pend        SKIP 1          ; preshift_pair's deferred tail's shift (0: none) (draw.6502) ...
+.ps_m           SKIP 1          ; ... from 24225 + ps_m
+.ps_end         SKIP 1          ; ... to 24427 + ps_end
     ASSERT P% <= &0D00              ; (page &0D: the NMI and the Master's vectors)
 ENDSECTION
 

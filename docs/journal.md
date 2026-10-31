@@ -178,3 +178,26 @@ How the port got here, in order: what worked and what didn't.
   per-object work spills past a VSync where the original's doesn't. By
   instruction timings the XOR is still several times the Z80's per byte
   (colour costs a read, masks and a pattern); the pre-shift about the Z80's.
+
+## 2026-10-31: the pre-shift's lines and tails
+
+- Profiled by label inside 57415: the per-line pointer sums took about
+  a third of a fused copy's time (frames of 2-3 bytes a line), and the
+  in-place tail shifts the most. A frame of 168 bytes shifts 256 bytes
+  of tail as well as itself.
+- The copies keep one index for the frame's byte and the buffer's, with
+  q one on at each line's zero; a line's end is the zero, q and the next
+  end. No more bytes, and every scenario faster.
+- Decision 18: the pair's first tail is shifted by the second call,
+  skipping what that call writes over. The tail's length and the
+  stream's words are worked out in closed form now, which paid for most
+  of it.
+- `make sprites`, every frame at both buffers and four shifts over a
+  patterned buffer (frames of 256 bytes or more poked into the frame
+  table for the stream path), and 400 random pairs, all compared with
+  the build before: identical.
+- Frames per pass against the original's, 2026-10-31, before and after:
+  fire56 1.073 to 1.048, idle110 1.097 to 1.060, idle56 1.087 to 1.057,
+  idle79 1.071 to 1.070, idle97 1.170 to 1.159, left56 1.068 to 1.050,
+  leftright97 1.063 to 1.058, right56 1.078 to 1.056, updown10 1.073
+  to 1.067, fuzz2_0 1.092 to 1.053.
