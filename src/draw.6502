@@ -85,38 +85,41 @@ ZA_AUTO1 xr_lines               ; xor_lines' lines
 \ Y changed.
 \
 \ A run along one cell row is our bytes 16 apart, on one character row
-\ and line, so its address, scenery inks and patterns are worked out
-\ once, not a byte at a time.
+\ and line, so it goes a segment at a time: up to the row's end, and at
+\ most 16 bytes (Y steps 16 a byte). A segment's address and each of
+\ its bytes' patterns, for the even lines and the odd (xr_pats), are
+\ worked out once; the bytes then go through code whose operands are
+\ set for the line (the image, the count) and for the byte (the spread
+\ tables' entry), so X and Y can be the byte's index and its offset.
 \
 \ xor_down: the same, for a run of as many bytes as the last one's; when
 \ it starts on the line below that one's start, in the same character
-\ row (as a sprite's next line mostly does), and the last one stayed on
-\ its cell row, it's our byte below, the same inks, and the patterns of
-\ the other line, which need no working out.
+\ row (as a sprite's next line mostly does), and the last one was one
+\ segment, it's our byte below, with the patterns worked out already.
+\ They hold for one sprite: sprite_ink, which every draw calls first,
+\ forgets them.
 .xor_down
 {
     \ What xor_down reuses: fixed zero page (main.6502's xr_cache), as
     \ it's kept from one call to the next.
-    s0 = xr_cache                   ; our address of the run's first byte
-    sp = xr_cache + 2               ; the scenery inks of its cell on
-    r8 = xr_cache + 4               ; its character row * 8
-    lx = xr_cache + 5               ; its Spectrum address
-    ly = xr_cache + 6
-    one = xr_cache + 7              ; non-zero: the run stayed on its cell row
-    ZA_AUTO2 scr                    ; our address of the byte (its left four pixels; the right +8)
-    ZA_AUTO2 pp                     ; the patterns of its character row and line
+    sl = xr_cache                   ; our address of the run's first byte (its left four pixels)
+    sr = xr_cache + 2               ; ... its right four (sl + 8)
+    lx = xr_cache + 4               ; its Spectrum address
+    ly = xr_cache + 5
+    one = xr_cache + 6              ; non-zero: the run was one segment
+    cm = xr_cache + 7               ; the segment's bytes (1-16)
+    ZA_AUTO2 sp                     ; the scenery inks of its cell on
     ZA_AUTO1 hy
-    ZA_AUTO1 m
-    ZA_AUTO1 i
+    ZA_AUTO1 r8
     ZA_AUTO1 old
+    ZA_AUTO1 ys
     LDA one : BEQ full
     CPX lx : BNE full
+    LDA xr_n : CMP cm : BNE full
     TYA : AND #7 : BEQ full         ; (a new character row)
     TYA : CLC : SBC ly : BNE full   ; (not the line below)
-    STY ly
-    INC s0                          ; (no carry: (y AND 7) < 7 above)
-    LDA s0 : STA scr : LDA s0+1 : STA scr+1
-    LDA xr_n : STA m
+    STY ly : STY hy
+    INC sl : INC sr                 ; (no carry: (y AND 7) < 7 above)
     JMP line
     ZA_UNREACHABLE
 .full
@@ -139,113 +142,106 @@ ZA_AUTO1 xr_lines               ; xor_lines' lines
     DEC xr_n : BNE run
     RTS
 .on_row
-    \ m: the run's bytes on this cell row (to its end, 31 - x + 1, at most).
+    \ cm: the segment's bytes: to the row's end (31 - x + 1), at most 16.
     TXA : ORA #&E0 : EOR #&FF       ; 31 - x
+    CMP #16 : BCC fits
+    LDA #15
+.fits
     CMP xr_n : BCS all
-    ADC #1                          ; (C clear: CMP, BCS)
-    LDY #0 : STY one
-    LDY hy
-    BCC got                         ; (at most 32: always)
+    ADC #1 : STA cm                 ; (C clear: CMP, BCS)
+    LDA #0 : STA one
+    BEQ got                         ; (always)
 .all
-    LDA xr_n
+    LDA xr_n : STA cm
 .got
-    STA m
-    TYA : AND #7 : ORA zx_lo,X : STA scr : STA s0
-    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA scr+1 : STA s0+1 ; (C clear: AND #&18, ASL)
     STX sp
+    TYA : AND #7 : ORA zx_lo,X : STA sl : ORA #8 : STA sr
+    TYA : AND #&18 : ASL A : ADC zx_hi,X : STA sl+1 : STA sr+1 ; (C clear: AND #&18, ASL)
     TYA : LSR A : LSR A : LSR A : AND #3 : CLC : ADC #HI(scen_ink) : STA sp+1
     TXA : LSR A : LSR A : AND #&38 : STA r8             ; the character row * 8
     TYA : AND #&18 : ASL A : ASL A : ASL A : ORA r8 : STA r8
+    \ Each byte's patterns: its ink's (spr_ink, or with spr_ink negative
+    \ its cell's scenery ink) for the row, even and odd lines.
+    LDY #0
+.fill
+    LDA spr_ink : BPL ink
+    LDA (sp),Y
+.ink
+    CLC : ADC r8 : TAX
+    LDA pat_even,X : STA xr_pats,Y
+    LDA pat_odd,X : STA xr_pats + 16,Y
+    INY : CPY cm : BNE fill
 .line
-    \ The line's patterns: pat_even or pat_odd (odd y), + the row * 8.
-    STY hy
-    LDA #HI(pat_even) : STA pp+1
-    TYA : LSR A : LDA r8 : BCC even
-    ADC #LO(pat_odd - pat_even) - 1 : BCC even      ; (C set)
-    INC pp+1
+    \ The line: X from 0 (even hy) or 16 (odd) indexes the patterns,
+    \ and the image's operand is set back as far; Y = 16 * the byte.
+    LDA hy : LSR A
+    LDA xr_img : LDY xr_img+1
+    LDX #0
+    BCC even
+    SBC #16 : BCS odd                                   ; (C set: LSR)
+    DEY
+.odd
+    LDX #16
 .even
-    STA pp
-    ASSERT LO(pat_even) = 0
-.cells
-    \ Each half of each byte: a pixel the XOR lights takes pat if unlit,
-    \ goes black if lit; the others stay. All unlit (most often), that's
-    \ the XOR's pixels AND pat; else (mixed: an erase's, mostly)
-    \ new = old EOR (the XOR's AND (old OR (pat AND unlit))).
-    LDY #0 : STY i
-    LDY spr_ink : BMI scenery
-    LDA (pp),Y : STA pat
-    LDY #0
-.own
-    LDA (xr_img),Y : BEQ own_next   ; (nothing to XOR)
-    TAX
-    LDY #0 : LDA (scr),Y : BNE own_mix_l
-    LDA spread_hi,X : AND pat : STA (scr),Y
-.own_r
-    LDY #8 : LDA (scr),Y : BNE own_mix_r
-    LDA spread_lo,X : AND pat : STA (scr),Y
-.own_next
-    LDA scr : CLC : ADC #16 : STA scr
-    BCC own_step : INC scr+1
-.own_step
-    INC i : LDY i
-    CPY m : BNE own
-    BEQ run_done                    ; (always)
-.own_mix_l
-    STA old : TAY
-    LDA unlit,Y : AND pat : ORA old : AND spread_hi,X : EOR old
-    LDY #0 : STA (scr),Y
-    JMP own_r
-.own_mix_r
-    STA old : TAY
-    LDA unlit,Y : AND pat : ORA old : AND spread_lo,X : EOR old
-    LDY #8 : STA (scr),Y
-    JMP own_next
-.scenery
-    LDY #0
+    STA img_op+1 : STY img_op+2
+    TXA : CLC : ADC cm : STA end_op+1
+    LDY #0                          ; (C clear: ADC, at most 32)
 .cell
-    LDA (xr_img),Y : BEQ cell_next
-    TAX
-    LDA (sp),Y : TAY : LDA (pp),Y : STA pat     ; the cell's scenery ink's
-    LDY #0 : LDA (scr),Y : BNE cell_mix_l
-    LDA spread_hi,X : AND pat : STA (scr),Y
-.cell_r
-    LDY #8 : LDA (scr),Y : BNE cell_mix_r
-    LDA spread_lo,X : AND pat : STA (scr),Y
-.cell_next
-    LDA scr : CLC : ADC #16 : STA scr
-    BCC cell_step : INC scr+1
-.cell_step
-    INC i : LDY i
-    CPY m : BNE cell
-.run_done
-    \ Past the run's bytes on this row: the image, the count, L + m.
-    TYA : CLC : ADC xr_img : STA xr_img
+    \ Each half of each byte: a pixel the XOR lights takes the pattern
+    \ if unlit, goes black if lit; the others stay. All unlit (most
+    \ often), that's the XOR's pixels AND the pattern; else (mixed: an
+    \ erase's, mostly) new = old EOR (the XOR's AND (old OR (pattern
+    \ AND unlit))). C stays clear throughout.
+.img_op
+    LDA &FFFF,X : BEQ next          ; (nothing to XOR)
+    STA hi_op+1 : STA lo_op+1
+    LDA (sl),Y : BNE mix_l
+.hi_op
+    LDA spread_hi : AND xr_pats,X : STA (sl),Y
+.right
+    LDA (sr),Y : BNE mix_r
+.lo_op
+    LDA spread_lo : AND xr_pats,X : STA (sr),Y
+.next
+    TYA : ADC #16 : TAY
+    INX
+.end_op
+    CPX #0 : BNE cell               ; (C clear while X is less)
+    \ Past the segment's bytes: the image, the count, L + cm.
+    LDA xr_img : CLC : ADC cm : STA xr_img
     BCC img_ok : INC xr_img+1
 .img_ok
-    LDA xr_n : SEC : SBC m : STA xr_n : BNE more
+    LDA xr_n : SEC : SBC cm : STA xr_n : BNE more
     RTS
 .more
-    LDA sp : CLC : ADC m : TAX
+    LDA sp : CLC : ADC cm : TAX
     LDA hy : ADC #0 : TAY
     JMP run
-.cell_mix_l
-    STA old : TAY
-    LDA unlit,Y : AND pat : ORA old : AND spread_hi,X : EOR old
-    LDY #0 : STA (scr),Y
-    JMP cell_r
-.cell_mix_r
-    STA old : TAY
-    LDA unlit,Y : AND pat : ORA old : AND spread_lo,X : EOR old
-    LDY #8 : STA (scr),Y
-    JMP cell_next
+.mix_l
+    STA old : STY ys : TAY
+    LDA unlit,Y : AND xr_pats,X : ORA old
+    LDY hi_op+1 : AND spread_hi,Y : EOR old
+    LDY ys : STA (sl),Y
+    JMP right
+.mix_r
+    STA old : STY ys : TAY
+    LDA unlit,Y : AND xr_pats,X : ORA old
+    LDY lo_op+1 : AND spread_lo,Y : EOR old
+    LDY ys : STA (sr),Y
+    JMP next
 }
 xor_run = xor_down.full
+    ASSERT LO(spread_hi) = 0 AND LO(spread_lo) = 0  ; (hi_op, lo_op: the byte is the operand's low byte)
+
+\ Each byte of xor_down's segment's patterns: even lines, then odd at +16.
+.xr_pats
+    SKIP 32
 
 \ xor_lines: xr_lines lines (0 is 256) of xr_n bytes from xr_img, the
 \ first at X (low), Y (high), each the next down as the original steps
 \ its lines (INC H; past a character row, L + 32 and H back a third
 \ unless that carried); each as xor_run, or within a character row
-\ after a line that was one run on screen, as xor_down does it.
+\ after a line that was one segment on screen, as xor_down does it.
 .xor_lines
 {
     ZA_AUTO1 bx
@@ -262,11 +258,9 @@ xor_run = xor_down.full
     INC by
     LDA by : AND #7 : BEQ row
     LDA xor_down.one : BEQ run
-    INC xor_down.s0                 ; (no carry: (y AND 7) < 7 above)
-    LDA xor_down.s0 : STA xor_down.scr
-    LDA xor_down.s0+1 : STA xor_down.scr+1
-    LDA bn : STA xor_down.m : STA xr_n
-    LDY by : STY xor_down.ly        ; (for xor_down)
+    INC xor_down.sl : INC xor_down.sr   ; (no carry: (y AND 7) < 7 above)
+    LDA by : STA xor_down.hy : STA xor_down.ly
+    LDA bn : STA xr_n
     JSR xor_down.line
     DEC xr_lines : BNE step
 .done
@@ -313,10 +307,13 @@ SECTION GameData                    ; (as xor_down)
 
 \ spr_ink for frame A (decision 10): the scenery's when erasing, else the
 \ frame's colour over an empty cell, else (no colour) the pumpkin's
-\ yellow when X = 0 (slot 0), else the scenery's. A kept.
+\ yellow when X = 0 (slot 0), else the scenery's. A kept. Each draw
+\ calls it first: xor_down forgets its last run, whose patterns were
+\ another sprite's.
 .sprite_ink
 {
     PHA
+    LDY #0 : STY xor_down.one
     LDY xor_erase : BNE scenery
     TAY : LDA a60422,Y : BEQ none
     EOR #70 : AND #7 : STA spr_ink
