@@ -423,3 +423,20 @@ would have, but for the bytes from 24425 to the end of its own image.
 The bytes are the original's again by the second call's end; between
 the two calls only the callers' register saves run. `preshift_pair`
 assumes those two buffers, the only pair the original has.
+
+## 20. The screen's first byte cleared with the rest (2026-10-31, provisional)
+
+The original's Cls (53087) zeroes 23296 down to 16385 with LDDR: one
+byte short, so 16384 keeps the top-left 8 pixels of whatever was there
+(the panel's head). On the Spectrum they can't be seen: the attribute
+at 22528 is now 0, ink black on paper black. Here a lit pixel takes its
+row's palette colour, not its attribute's, so after game over a yellow
+pixel showed at the top left (and could on the menu, the credits and
+the win). The port clears that byte too.
+
+| | Seen | Cost |
+|---|---|---|
+| **A. Clear 16384 with the rest** (chosen) | as the original: nothing | none (less code); the byte differs from the original's until the next screen draws over it, and nothing reads it (the panel is redrawn whole) |
+| B. Keep the byte, its pixels coloured black | as the original | a mask of that cell's pixels in a logical colour the row's palette makes black, for one byte nobody sees |
+| C. Keep the byte as it was | a stray pixel | none |
+

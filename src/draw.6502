@@ -1005,14 +1005,13 @@ ZA_AUTO1 src_y
     RTS
 }
 
-\ 53087, Cls: the screen and attributes to 0, but the screen's first
-\ byte (16384), which the original's LDDR stops short of. The scenery
-\ inks with them.
+\ 53087, Cls: the screen and attributes to 0, and the scenery inks with
+\ them. The original's LDDR stops short of the screen's first byte
+\ (16384), black on black there once its attribute is 0; here a pixel's
+\ colour is its row's, so that byte is cleared too (decision 20).
 .z53087
 {
-    LDA screen : PHA : LDA screen+8 : PHA
     JSR cls
-    PLA : STA screen+8 : PLA : STA screen
     LDA #0 : TAX
 .each
     STA attrs,X : STA attrs+256,X : STA attrs+512,X
