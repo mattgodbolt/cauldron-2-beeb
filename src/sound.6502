@@ -390,15 +390,18 @@ MUS_BASS = 2
 }
 
 \ mus_irq onto IRQ1V, ahead of irq_handler, while the music plays.
-\ (Called with interrupts off.)
+\ (Called with interrupts off. IRQ1V itself says whether it's on: should
+\ anything put irq_handler back, it goes on again.)
 .mus_install
 {
-    LDA mus_installed : BNE done
+    LDA irq1v : CMP #LO(mus_irq) : BNE install
+    LDA irq1v+1 : CMP #HI(mus_irq) : BEQ done
+.install
     LDA irq1v : STA mus_old_irq
     LDA irq1v+1 : STA mus_old_irq+1
     LDA #LO(mus_irq) : STA irq1v
     LDA #HI(mus_irq) : STA irq1v+1
-    INC mus_installed
+    LDA #1 : STA mus_installed
 .done
     RTS
 }
