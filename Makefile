@@ -76,7 +76,7 @@ build/data/title.scr: original/CauldronII.tap tools/tapblock.py
 build/data/title.bin: build/data/title.scr tools/mkscreen.py
 	python3 tools/mkscreen.py $< $@ --png $(@:.bin=.png)
 
-check: $(TARGET) rooms sprites music front
+check: $(TARGET) rooms sprites music front passes
 
 rooms: $(VIEWER) build/zxrooms/room_127.scr
 	node tools/roomcheck.mjs
