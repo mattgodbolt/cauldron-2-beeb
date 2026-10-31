@@ -141,3 +141,5 @@ How the port got here, in order: what worked and what didn't.
   fuzzed scenarios of 400 passes agree too.
 - The BBC takes 1.4-1.7 times the original's frames a pass (2026-10-31):
   the sprites' pre-shift and XOR, under optimisation.
+- `tools/fuzz.py --count 12 --seed 2 --passes 1500`: all agree (up to
+  ten rooms crossed, down to one life). fuzz2_0 is kept as a scenario.
