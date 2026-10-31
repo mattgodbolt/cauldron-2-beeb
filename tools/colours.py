@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The port's colour (decisions 7 and 8): the rule that picks how a
+"""The port's colour (decisions 10 and 11): the rule that picks how a
 Spectrum ink shows on a row whose three inks are given, and the planner
 that gives each room's rows their inks. Shared by tools/mkdata.py (which
 writes each room's plan into ROOMDATA) and tools/roomcmp.py (which checks

@@ -65,3 +65,35 @@ How the port got here, in order: what worked and what didn't.
   player code has run. The readers are compared for every input. No
   differences. The routines others own that the player calls (57307,
   57326, 57355) are the test's own Python, from the original's code.
+
+## 2026-10-31: the data and the drawing
+
+- `tools/mkdata.py` writes the original's regions with every pointer
+  word relocated (the tables found from the code's word lookups: the
+  frame table, the bank and monster lists, the scripts, the handlers,
+  the texts, the controls vector, the interrupt's tunes; the clipped
+  draw's sink 24995 among the screen lines). Two sideways banks,
+  GAMEDATA and ROOMDATA, filled by a LOADER after cauldron-beeb's
+  (decision 9). ROOMDATA had no room for a copy of all the bank lists,
+  so room entry copies the room's one.
+- Colour, planned before writing any 6502 (decisions 10 and 11): the
+  rooms' rows show at most three inks in 1916 of 1920 rows, but keeping
+  yellow on every play row for the pumpkin leaves two, which 49 rows
+  outrun. A dynamic programme over the rows with one change a boundary
+  shows 99.60% of lit pixels in their own colour, within 0.03% of
+  changing freely; dithers cover most of the rest.
+- What the original shows a monster in isn't its frame attribute: the
+  attribute is XORed onto the room's 70, so 69 (cyan) shows magenta.
+  The port's sprite colour is what the original shows over the empty
+  room.
+- The drawing transcribed (draw.6502, room.6502). The pre-shift's stack
+  trick became a ROR stream over the same bytes; reading it for that
+  showed the stream runs 256 bytes long for frames of 128 bytes or more
+  (research correction in core.md).
+- The room hides while it draws by the CRTC's R6 (rows displayed), the
+  palette not having enough splits to blank three colours at once.
+- `make rooms`: every room (and the panel) identical to the original's
+  drawing: lit pixels, attributes and the planned colours, on the B and
+  the Master. `make sprites`: random calls of 57058 and 57194 on both
+  machines, identical (lit pixels, attributes, colours, the pre-shift's
+  bytes).

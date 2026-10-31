@@ -19,7 +19,7 @@ Pointers into the Spectrum's screen stay the original's values, since
 the code does arithmetic on them. A word that a pointer table holds but
 that points nowhere the port has (KEEP) is kept as it is.
 
-room_plans: each room's colours (decisions 7 and 8), tools/colours.py's
+room_plans: each room's colours (decisions 10 and 11), tools/colours.py's
 plan from the original's own drawing of the room (tools/zxrooms.py's
 .scr files): 10 bytes a room, colours.pack_plan's nibbles.
 """

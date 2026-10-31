@@ -4,7 +4,7 @@
 \ helpers (57307, 57326, 57341).
 \
 \ The screen keeps exactly the original's lit pixels; their colour is the
-\ port's (decisions 5 and 7). Each character row r has a pattern pair for
+\ port's (decisions 5 and 10). Each character row r has a pattern pair for
 \ each Spectrum ink k (make_patterns, room.6502): pat_even and pat_odd at
 \ k * 32 + r, a MODE 1 byte of four pixels' logical colours for the
 \ row's even and odd lines, solid or an ordered dither. A lit pixel's
@@ -147,7 +147,7 @@ ZA_AUTO1 scen_y
     RTS
 }
 
-\ spr_ink for frame A (decision 7): the scenery's when erasing, else the
+\ spr_ink for frame A (decision 10): the scenery's when erasing, else the
 \ frame's colour over an empty cell, else (no colour) the pumpkin's
 \ yellow when X = 0 (slot 0), else the scenery's. A kept.
 .sprite_ink

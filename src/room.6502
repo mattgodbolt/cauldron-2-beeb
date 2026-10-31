@@ -1,12 +1,12 @@
 \ ***************************************************************************
 \ Rooms: drawing a room (53949 and its helpers 54213, 54499), the panel
 \ (53550, 53823), the colours
-\ (decisions 7 and 8) and the sideways banks' paging.
+\ (decisions 10 and 11) and the sideways banks' paging.
 \
 \ The room's data (tiles, blocks, layouts, tile attributes: r_rooms, and
 \ its colour plan, room_plans) is in ROOMDATA, paged in only while the
 \ room draws; everything else is GAMEDATA's, paged in all the time
-\ (decision 6). So the room's tile-bank list (62954, in GAMEDATA) is
+\ (decision 9). So the room's tile-bank list (62954, in GAMEDATA) is
 \ copied to main RAM (bank_list) before ROOMDATA is paged in.
 \ ***************************************************************************
 
@@ -21,7 +21,7 @@
 
 \ The play area's rows shown or not (CRTC R6, the rows displayed): the
 \ port's way of hiding the room while it draws, as the original hides it
-\ by zeroing its attributes (decision 8).
+\ by zeroing its attributes (decision 11).
 .play_hidden
     LDA #6 : STA crtc_reg : LDA #4 : STA crtc_data
     RTS
@@ -218,7 +218,7 @@
     JMP z54499
 }
 
-\ --- The colours (decisions 7 and 8) ---------------------------------------
+\ --- The colours (decisions 10 and 11) ---------------------------------------
 
 \ Each row's logical 1-3 as BBC colours: rp1, rp2, rp3 (24 each). The
 \ panel's rows are fixed (tools/colours.py's PANEL_ROWS).
@@ -444,7 +444,7 @@ PANEL_RP3 = 2                       ; green
 \ attributes of rows 0-3 to 70, SCORE, MAGIC, the witches' faces, the
 \ score and magic, the mouths at rest (53823). The attributes are set
 \ before the lives here, not after: a frame without colour takes its
-\ cell's (decision 7), which the original's attributes give it after;
+\ cell's (decision 10), which the original's attributes give it after;
 \ the lives' frame XORs no attribute, so the attributes end the same.
 .z53550
 {
@@ -521,15 +521,49 @@ IF DEFINED(VIEWER)
     STA a58804,X
     DEX : BPL digits
     LDA #'9' : STA a58813 : STA a58814
-    JSR z53087
-    JSR z53550
     LDA #&FF : STA view_shown
+    LDA #0 : STA test_n
 .viewer_wait
+    LDA test_n : BNE tests
     LDA view_num : CMP view_shown : BEQ viewer_wait
     STA view_shown
+    JSR z53087                      ; (the panel afresh too: the sprite tests draw on it)
+    JSR z53550
     JSR z54213
     LDA view_num : STA a24030
     JSR room_scenery
+    JMP viewer_wait
+    ZA_UNREACHABLE
+\ tools/spritecheck.mjs's calls (test_calls, test_n of them, 6 bytes
+\ each: frame, x, y, slot, erase, kind): each pre-shifts the frame into
+\ 24225 (57415) and XORs it with slot (24022) and xor_erase as given,
+\ through 57058 (kind 0) or straight through 57194 (kind 1).
+.tests
+{
+    ZA_AUTO1 i
+    ZA_AUTO1 kind
+    LDA #0 : STA i
+.call
+    LDA i : ASL A : ADC i : ASL A : TAX          ; (6i: C clear)
+    LDA test_calls+3,X : STA a24022
+    LDA test_calls+4,X : STA xor_erase
+    LDA test_calls+1,X : STA re
+    LDA test_calls+2,X : STA rd
+    LDA test_calls+5,X : STA kind
+    LDA #LO(a24225) : STA rl : LDA #HI(a24225) : STA rh
+    LDA test_calls,X
+    JSR z57415
+    LDX kind : BNE direct
+    JSR z57058
+    JMP next
+    ZA_UNREACHABLE
+.direct
+    JSR z57194
+.next
+    INC i : LDA i : CMP test_n : BNE call
+    LDA #0 : STA test_n
+}
+.test_done
     JMP viewer_wait
 ENDIF
 

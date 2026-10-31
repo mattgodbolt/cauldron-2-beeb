@@ -51,7 +51,7 @@ LD_SRC = &80                        ; (the loaders' zero page: the game's isn't 
 LD_DST = &82
 
 \ The original's data (tools/mkdata.py, build/data) in two sideways RAM
-\ banks (decision 6): GAMEDATA, the sprites and the tables, paged in all
+\ banks (decision 9): GAMEDATA, the sprites and the tables, paged in all
 \ the time; ROOMDATA, the rooms' tiles, blocks, layouts and attributes
 \ and their colour plans, paged in while a room draws. LOADER stages each
 \ file at DATA_LOAD and copies it to a free bank.
@@ -260,6 +260,9 @@ IF DEFINED(VIEWER)
 .view_num       SKIP 1          ; the viewer's room (tools/roomcheck.mjs sets it)
 .view_shown     SKIP 1          ; ... and the one drawn
 .view_game      SKIP 1          ; non-zero: a key starts the game instead
+TEST_CALLS = 16
+.test_n         SKIP 1          ; the sprite calls to make (tools/spritecheck.mjs)
+.test_calls     SKIP 6 * TEST_CALLS
 ENDIF
     ALIGN &100
 .zx_lo          SKIP 256        ; zxscreen.6502's tables
