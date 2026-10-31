@@ -55,9 +55,10 @@ LD_DST = &82
 
 \ The original's data (tools/mkdata.py, build/data) in two sideways RAM
 \ banks (decision 9): GAMEDATA, the sprites and the tables, paged in all
-\ the time; ROOMDATA, the rooms' tiles, blocks, layouts and attributes
-\ and their colour plans, paged in while a room draws. LOADER stages each
-\ file at DATA_LOAD and copies it to a free bank.
+\ the time; ROOMDATA, the rooms' tiles, blocks and attributes, and their
+\ layouts and colour plans packed (decision 20), with the room drawing's
+\ code, paged in while a room draws. LOADER stages each file at DATA_LOAD
+\ and copies it to a free bank.
 DATA_LOAD = &1900
 SECTION GameData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "GAMEDAT", guard = &C000
     INCLUDE "../build/data/gamedata.6502"
@@ -66,9 +67,7 @@ SECTION GameData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 O
 ENDSECTION
 SECTION RoomData, org = &8000, load = &FFFF0000 OR DATA_LOAD, exec = &FFFF0000 OR DATA_LOAD, filename = "ROOMDAT", guard = &C000
     INCLUDE "../build/data/roomdata.6502"
-.roomdata_end
-    PRINT "ROOMDATA &8000-&", ~roomdata_end, " (", &C000 - roomdata_end, " bytes free)"
-    ASSERT DATA_LOAD + roomdata_end - &8000 <= LOADER_ORG
+    \ (room.6502 adds the room drawing; roomdata_end follows the code)
 ENDSECTION
 
 \ LOADER: !BOOT runs it first, high in memory (below MODE 7's screen). It
@@ -270,6 +269,19 @@ ENDIF
 PACKED_TOP = screen
     ASSERT PACKED_TOP >= code_end + 16
     ASSERT PACKED_TOP >= payload_end    ; (the packed bytes move up, clear of the loader before them)
+ENDSECTION
+
+SECTION RoomData
+.roomdata_end
+ENDSECTION
+\ A room's pack unpacked (room.6502's room_unpack): its layouts, then its
+\ plans. After ROOMDATA's bytes, so not in the file.
+SECTION RoomBuf, org = roomdata_end, virtual = TRUE
+.room_buf       SKIP ROOM_PACK * (40 + 10)
+.room_buf_end
+    PRINT "ROOMDATA &8000-&", ~roomdata_end, ", its buffer to &", ~room_buf_end, " (", &C000 - room_buf_end, " bytes free)"
+    ASSERT room_buf_end <= &C000
+    ASSERT DATA_LOAD + roomdata_end - &8000 <= LOADER_ORG
 ENDSECTION
 
 SECTION GameData

@@ -72,7 +72,7 @@ const matrix = (n) => [n & 15, n >> 4];
 const S = loadSymbols(symbols);
 const labels = Object.entries(S)
     .filter(([k, v]) => typeof v === "number" && !k.includes(".") && v >= 0x0e00 && v < 0xc000 && /^[a-z]/.test(k)
-        && !/^(roomdata|room_plans)/.test(k) && !/^a\d{5}$/.test(k))
+        && !/^(roomdata|room_pack|room_buf|r_)/.test(k) && !/^a\d{5}$/.test(k))
     .sort((a, b) => a[1] - b[1]);
 const labelOf = new Map();
 const routine = (a) => {

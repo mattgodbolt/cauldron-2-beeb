@@ -3,11 +3,13 @@
 \ (53550, 53823), the colours
 \ (decisions 10 and 11) and the sideways banks' paging.
 \
-\ The room's data (tiles, blocks, layouts, tile attributes: r_rooms, and
-\ its colour plan, room_plans) is in ROOMDATA, paged in only while the
-\ room draws; everything else is GAMEDATA's, paged in all the time
-\ (decision 9). So the room's tile-bank list (62954, in GAMEDATA) is
-\ copied to main RAM (bank_list) before ROOMDATA is paged in.
+\ The room's data (tiles and blocks: r_rooms; tile attributes: r_tattr;
+\ its layout and colour plan, packed: room_packs) is in ROOMDATA, paged
+\ in only while the room draws; everything else is GAMEDATA's, paged in
+\ all the time (decision 9). So the room's tile-bank list (62954, in
+\ GAMEDATA) is copied to main RAM (bank_list) before ROOMDATA is paged
+\ in. What runs only with ROOMDATA in lives there (decision 20): the
+\ tile loop, the unpacking of the room's pack, and the colours' making.
 \ ***************************************************************************
 
 \ The sideways banks (the loader leaves their numbers in game_bank and
@@ -118,6 +120,56 @@
 {
     ZA_AUTO1 room
     ZA_AUTO2 p
+    STA room
+    \ The bank list into main RAM (62954, a word a room).
+    ASL A : TAY
+    LDA a62954,Y : STA p : LDA a62954+1,Y : STA p+1
+    LDY #0 : LDA (p),Y : ASL A : ASL A : TAY       ; 1 + 4n bytes
+.copy
+    LDA (p),Y : STA bank_list,Y
+    DEY : BPL copy
+    JSR page_rooms
+    LDA room : JSR room_tiles
+    JSR page_game
+    JMP z54499
+}
+
+\ The colours made from rp1-3 (make_patterns, make_program: ROOMDATA's)
+\ for a caller with GAMEDATA in.
+.make_colours
+    JSR page_rooms
+    JSR make_patterns
+    JSR make_program
+    JMP page_game
+
+SECTION RoomData
+
+\ Unpack room A's pack (room_packs: ROOM_PACK rooms' layouts, then their
+\ plans) into room_buf, unless it's there already: most ways out of a
+\ room lead to one in its pack. The unpacker is C2's loader's
+\ (lib/dzx02.6502), again: that copy is gone once the game runs.
+.room_in_buf    EQUB &FF            ; room_packs' offset of the pack in room_buf (&FF: none)
+.room_unpack
+{
+    FOR i = 1..ROOM_PACK_SHIFT
+        LSR A
+    NEXT
+    ASL A : TAY
+    CPY room_in_buf : BNE fresh
+    RTS
+.fresh
+    STY room_in_buf
+    LDA room_packs,Y : STA src : LDA room_packs+1,Y : STA src+1
+    LDA #LO(room_buf) : STA dst : LDA #HI(room_buf) : STA dst+1
+    INCLUDE "lib/dzx02.6502"        ; (falls into its unpack)
+}
+
+\ Room A's tiles, with ROOMDATA in: its pack unpacked, its colours, then
+\ the scenery as 53979-54151 draws it.
+.room_tiles
+{
+    ZA_AUTO1 room
+    ZA_AUTO2 p
     ZA_AUTO2 layout
     ZA_AUTO2 block
     ZA_AUTO2 base
@@ -129,24 +181,18 @@
     ZA_AUTO1 attr, row, col, pe, po
     ZA_AUTO2 q, q8
     STA room
-    \ The bank list into main RAM (62954, a word a room).
-    ASL A : TAY
-    LDA a62954,Y : STA p : LDA a62954+1,Y : STA p+1
-    LDY #0 : LDA (p),Y : ASL A : ASL A : TAY       ; 1 + 4n bytes
-.copy
-    LDA (p),Y : STA bank_list,Y
-    DEY : BPL copy
-    JSR page_rooms
+    JSR room_unpack
     LDA room : JSR room_colours
-    \ The layout: 43750 + 40 * room.
-    LDA room : STA layout : LDA #0 : STA layout+1
-    ASL layout : ROL layout+1 : ASL layout : ROL layout+1 : ASL layout : ROL layout+1
-    LDA layout : STA p : LDA layout+1 : STA p+1                     ; 8 * room
-    ASL layout : ROL layout+1 : ASL layout : ROL layout+1           ; 32 * room
-    LDA layout : CLC : ADC p : STA layout
-    LDA layout+1 : ADC p+1 : STA layout+1
-    LDA layout : CLC : ADC #LO(a43750) : STA layout
-    LDA layout+1 : ADC #HI(a43750) : STA layout+1
+    \ The layout (the original's 43750 + 40 * room): room_buf + 40 * the
+    \ room's place in its pack.
+    LDA #LO(room_buf) : STA layout : LDA #HI(room_buf) : STA layout+1
+    LDA room : AND #ROOM_PACK - 1 : TAX : BEQ laid_out
+.next_layout
+    LDA layout : CLC : ADC #40 : STA layout
+    BCC same_page : INC layout+1
+.same_page
+    DEX : BNE next_layout
+.laid_out
     LDA #0 : STA brow
 .block_row
     LDA #0 : STA bcol
@@ -243,9 +289,9 @@
     JMP block_row
     ZA_UNREACHABLE
 .done4
-    JSR page_game
-    JMP z54499
+    RTS
 }
+ENDSECTION
 
 \ --- The colours (decisions 10 and 11) ---------------------------------------
 
@@ -255,20 +301,19 @@
 PANEL_RP1 = 3                       ; yellow
 PANEL_RP3 = 2                       ; green
 
-\ Room A's colours from its plan (room_plans: ROOMDATA paged in): rows
-\ 4-23 from the panel's last, logical 1 yellow, then make_patterns and
-\ make_program.
+SECTION RoomData
+\ Room A's colours from its plan (in room_buf, its pack unpacked: ROOMDATA
+\ paged in): rows 4-23 from the panel's last, logical 1 yellow, then
+\ make_patterns and make_program.
 .room_colours
 {
     ZA_AUTO2 p
     ZA_AUTO1 nib
-    \ p = room_plans + 10 * A
-    STA p : LDA #0 : STA p+1
-    ASL p : ROL p+1 : LDA p : LDX p+1          ; 2A
-    ASL p : ROL p+1 : ASL p : ROL p+1          ; 8A
-    CLC : ADC p : STA p : TXA : ADC p+1 : STA p+1
-    LDA p : CLC : ADC #LO(room_plans) : STA p
-    LDA p+1 : ADC #HI(room_plans) : STA p+1
+    \ p = the plans in room_buf + 10 * the room's place in its pack
+    AND #ROOM_PACK - 1 : STA p
+    ASL A : ASL A : ADC p : ASL A              ; 10 * (C clear: at most 70)
+    CLC : ADC #LO(room_buf + ROOM_PACK * 40) : STA p
+    LDA #HI(room_buf + ROOM_PACK * 40) : ADC #0 : STA p+1
     JSR panel_colours
     LDX #4
 .row
@@ -294,6 +339,7 @@ PANEL_RP3 = 2                       ; green
     JSR make_patterns
     JMP make_program
 }
+ENDSECTION
 
 \ The panel's rows into rp1-3 (rows 0-3).
 .panel_colours
@@ -318,10 +364,10 @@ PANEL_RP3 = 2                       ; green
     LDA rp2+3 : STA rp2,X
     LDA rp3+3 : STA rp3,X
     INX : CPX #SCREEN_ROWS : BNE row
-    JSR make_patterns
-    JMP make_program
+    JMP make_colours
 }
 
+SECTION RoomData
 \ The pattern pairs (pat_even, pat_odd at row * 8 + ink) for every row
 \ and Spectrum ink, from rp1-3: tools/colours.py's pick. Each pair of
 \ logical colours (a, b) scores 4 * the colours it is out from the ink's,
@@ -468,6 +514,7 @@ PANEL_RP3 = 2                       ; green
     RTS
 }
     ASSERT MAX_SPLITS * 2 + 5 + 2 * (MAX_SPLITS + 2) <= PAL_PROG_LEN
+ENDSECTION
 
 \ --- The panel -----------------------------------------------------------
 

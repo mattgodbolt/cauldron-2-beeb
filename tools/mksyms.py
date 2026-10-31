@@ -25,7 +25,8 @@ REGIONS = [
     (22528, 23295, "attrs"),        # the attribute file's shadow (decision 5)
     (24000, 25099, "vars"),         # the game's variables, slots and buffers
     (25900, 34525, "r_sprites"),    # sprite graphics (sideways, GAMEDATA)
-    (34526, 49510, "r_rooms"),      # tiles, blocks, layouts, tile attributes (ROOMDATA)
+    (34526, 43749, "r_rooms"),      # tiles, blocks (ROOMDATA)
+    (48870, 49510, "r_tattr"),      # tile attributes (ROOMDATA; the layouts between are packed: room_packs)
     (49511, 50022, "r_font"),       # the font (main RAM)
     (57726, 64194, "r_tables"),     # tables, texts, the tone table (GAMEDATA; nothing reads past 64194)
 ]

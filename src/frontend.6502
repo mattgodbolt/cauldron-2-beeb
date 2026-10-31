@@ -50,8 +50,7 @@ KEY_5 = &13
     LDA fe_inks_menu+1,Y : STA rp2,X
     LDA fe_inks_menu+2,Y : STA rp3,X
     DEX : BPL row
-    JSR make_patterns
-    JSR make_program
+    JSR make_colours
     LDA #LO(pal_prog) : LDY #HI(pal_prog) : JMP set_palette
 }
 
