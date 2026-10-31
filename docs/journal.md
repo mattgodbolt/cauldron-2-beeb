@@ -122,3 +122,22 @@ How the port got here, in order: what worked and what didn't.
   the screen before, so stale splits land mid-screen: the front end's
   palettes carry one split that changes nothing, until `set_palette`
   stops T1 itself.
+
+## 2026-10-31: the layers merged
+
+- Four agents transcribed in worktrees: drawing and data, the game and
+  objects, the player and input, the front end and sound. Merging them
+  found four routines written twice (53101, 56811, 57714, 53798), two
+  names for the keys' table, and the front end's colours built but never
+  shown. Decisions renumbered 12-15.
+- With nothing stubbed the code no longer fitted under the title from
+  `&1900`: decision 16 packs it with baron's zx02 transform, and the font
+  moved to GAMEDATA. Main RAM is now full.
+- A room took 43 frames to draw, every tile byte through the general
+  Spectrum-address writer; drawn straight into its cell, 17.
+- `make passes`: all nine scenarios agree with the original on every
+  byte of 24000-25099 at every pass, on the B and the Master, once 24000
+  (the explosion's frame count, the interrupt's) is left out. Eight
+  fuzzed scenarios of 400 passes agree too.
+- The BBC takes 1.4-1.7 times the original's frames a pass (2026-10-31):
+  the sprites' pre-shift and XOR, under optimisation.

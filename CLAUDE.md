@@ -27,8 +27,30 @@ make disasm     # build/c2.skool from disasm/*.ctl
 - The build lists the original's routines not yet transcribed (stubs that
   stop at `unwritten`).
 
-As the port takes shape, this file gathers the gotchas met, as
-`../cauldron-beeb/CLAUDE.md` does.
+- `make passes` plays the original and the port side by side
+  (`tests/scenarios.txt`) and compares 24000-25099 every main-loop pass;
+  `python3 tools/fuzz.py --count N --seed S` does it with random keys
+  (a failing line goes into the scenarios). `node tools/sample.mjs` is a
+  sampling profiler of play.
+- `make SOFT=1`: stubs return instead of stopping, to try what's written.
+
+## Gotchas met
+
+- **Main RAM is full** (decision 16). The build's `PRINT`s say what's
+  left, and the viewer build (`make rooms`) is tighter than the release.
+  A test-only build that adds code can overflow: test the release disc
+  where you can (as `make front` does).
+- C2's code is packed (baron's `zx02` transform) because it loads at
+  `&1900`, below the title in the screen. The loader runs first in the
+  file, moves the packed bytes up and unpacks from page 4.
+- A palette program built by `make_program` isn't shown until
+  `set_palette` takes it (the room does it at 54499).
+- The panel's pixels take their colours from the rows' palettes when
+  they're drawn: set the colours (`plain_colours`) before drawing text.
+- jsbeeb's key names: `K4` not `4`, `SLASH`, `COLON_STAR`.
+- Agents in worktrees: merging two that each transcribed the same
+  routine fails with a duplicate symbol; append-only docs (decisions,
+  journal) conflict and get renumbered on merge.
 
 ## The rules (from kieranhj/beeb-port-kit)
 
