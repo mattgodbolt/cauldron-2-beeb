@@ -554,7 +554,7 @@ loads and a store. Main RAM had a page free after main's room work
 |---|---|---|
 | A. No tables (before) | | 15786 (on the tree before decision 22) |
 | B. >> 2, 4 and 6 | 768 | 15602 (the same tree) |
-| **C. >> 4 and 6; >> 2 in code; the in-place shift in ROOMDATA** (chosen) | 512 | 13876 (with decision 22; 14134 without these) |
+| **C. >> 4 and 6; >> 2 in code; the in-place shift in ROOMDATA** (chosen) | 512 | 13876 (with decision 22; 14127 without these) |
 
 C's in-place shift reads and writes only main RAM, so it runs from
 ROOMDATA, paged in around it as the room drawing's code is (decision

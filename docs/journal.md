@@ -334,6 +334,6 @@ How the port got here, in order: what worked and what didn't.
   pattern, the unlit table) is most of it. Dropped for the room.
 - 57194's colour rows a pointer each, a third of the time a cell; few
   frames in the scenarios have a colour, so it hardly shows.
-- `make passes`' frames, main before and after: 14134 to 13876.
+- `make passes`' frames, main before and after: 14127 to 13876.
   `make timeline`: 135 frames lost, 2129 gained (main had 136 lost).
 - `tools/sample.mjs` takes a third argument, routines to look inside.
