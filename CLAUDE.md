@@ -66,6 +66,12 @@ make disasm     # build/c2.skool from disasm/*.ctl
 4. **Measure, don't recall.** Run it, read the bytes, read memory back.
    Verify against the buffer, not the screenshot.
 
+**Speed:** the goal is play as smooth as possible, not the original's
+frame timing (Matt, 2026-10-31). Ahead of the original is fine, never
+slowed to match it; optimisation is always worth a go, judged by the
+frames that run over (`make timeline`), with the game's state still the
+original's pass by pass (`make passes`).
+
 ## House rules
 
 - Commit messages end at `Co-Authored-By:`; never a claude.ai session
