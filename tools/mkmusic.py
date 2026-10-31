@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The original's three tunes for src/sound.6502, read from its snapshot.
 
-    python3 tools/mkmusic.py build/c2.z80 build/data/music.6502 [--tables]
+    python3 tools/mkmusic.py build/c2.z80 build/data/music.6502
 
 Writes, under labels src/sound.6502 uses:
 
@@ -18,10 +18,6 @@ Writes, under labels src/sound.6502 uses:
     timer that switches the channel's volume, and how many half-cycles a
     tick sounds for (the original's 2.11 frames: 1536 iterations of the
     loop, 147456 T-states).
-
---tables also writes the original's 57726-64998 under `r_tables`, in main
-RAM, for a branch built before tools/mkdata.py places them (sound.6502
-and frontend.6502 read the effects' widths and the texts there).
 """
 import argparse
 import os
@@ -57,7 +53,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("snap")
     ap.add_argument("out")
-    ap.add_argument("--tables", action="store_true")
     args = ap.parse_args()
     m = zxmusic.load(args.snap)
     lines = ["\\ Made by tools/mkmusic.py from the original's snapshot. Never edited.", ""]
@@ -108,11 +103,6 @@ def main():
     for c in (1, 2):
         lines.append(f".mus_start{c}_lo EQUB " + ", ".join(f"LO(mus_t{t.number}_ch{c})" for t in tunes))
         lines.append(f".mus_start{c}_hi EQUB " + ", ".join(f"HI(mus_t{t.number}_ch{c})" for t in tunes))
-    if args.tables:
-        lines.append("")
-        lines.append("\\ The original's 57726-64998, until tools/mkdata.py places them.")
-        lines.append(".r_tables")
-        lines.append(equb(m[57726:64999], 32))
     with open(args.out, "w") as f:
         f.write("\n".join(lines) + "\n")
 

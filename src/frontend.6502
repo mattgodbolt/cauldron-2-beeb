@@ -1,3 +1,533 @@
 \ ***************************************************************************
-\ The front end: the menu, the credits, game over and the win.
+\ The front end: the menu, the keys, game over and the win.
+\
+\ The menu in the BBC's idiom (decision 8): the original's Kempston,
+\ Interface II and keyboard become the joystick, the keyboard's default
+\ keys and keys of the player's own. The input (input.6502) reads the
+\ keys from key_table (six internal key numbers: up, down, left, right,
+\ fire, abort) or, with use_joystick set, the analogue joystick; the
+\ front end only writes them.
+\
+\ The text is the original's, printed by the original's printer (54363)
+\ with its attributes; each screen's colours are a palette program with
+\ no splits and the ink each attribute's ink shows as (decision 9).
 \ ***************************************************************************
+
+INCLUDE "../build/data/fallback.6502"
+
+\ The original's routines the front end calls, by name: the printer, the
+\ clear, the input. (The front end's test build, FETEST, puts its own in.)
+IF DEFINED(FETEST)
+    fe_print = fe_test_print
+    fe_cls = fe_test_cls
+ELSE
+    fe_print = z54363
+    fe_cls = z53087
+ENDIF
+
+\ Internal key numbers (the System VIA's, as key_down takes them).
+KEY_1 = &30
+KEY_2 = &31
+KEY_3 = &11
+KEY_4 = &12
+KEY_5 = &13
+
+\ ---------------------------------------------------------------------------
+\ The colours (decision 9). The original's front-end text is black paper
+\ and at most three inks a screen: one palette each, and the ink each of
+\ the Spectrum's eight shows as (black, blue, red, magenta, green, cyan,
+\ yellow, white), the nearest the palette has.
+
+\ The menu, the keys and the credits: yellow, cyan and bright red.
+\ Game over and the win: magenta and red. Palette programs as
+\ set_palette takes them, with one split that changes nothing (logical 0
+\ black again): with none, set_palette leaves the User VIA's T1 running
+\ free from the screen before, its splits landing anywhere.
+.fe_palette_menu
+    EQUB 1, PHYS_BLACK, PHYS_RED, PHYS_YELLOW, PHYS_CYAN
+    EQUB 0, PHYS_BLACK
+    EQUW &FFFF, &FFFF
+.fe_palette_end
+    EQUB 1, PHYS_BLACK, PHYS_RED, PHYS_MAGENTA, PHYS_YELLOW
+    EQUB 0, PHYS_BLACK
+    EQUW &FFFF, &FFFF
+.fe_ink_menu
+    EQUB 0, 3, 1, 1, 3, 3, 2, 2
+.fe_ink_end
+    EQUB 0, 2, 1, 2, 3, 3, 3, 3
+    ASSERT fe_ink_end = fe_ink_menu + 8
+
+.fe_colours_menu
+    LDX #0
+    LDA #LO(fe_palette_menu) : LDY #HI(fe_palette_menu)
+    JMP fe_colours
+.fe_colours_end
+    LDX #8
+    LDA #LO(fe_palette_end) : LDY #HI(fe_palette_end)
+\ The palette program at (A, Y); the inks from fe_ink_menu + X.
+.fe_colours
+{
+    STA fe_pp : STY fe_pp+1
+    LDY #0
+.ink
+    LDA fe_ink_menu,X : STA ink_logical,Y
+    INX : INY : CPY #8 : BNE ink
+    LDA fe_pp : LDY fe_pp+1
+    JMP set_palette
+}
+.fe_pp      EQUW 0
+
+\ ---------------------------------------------------------------------------
+\ 52481: the menu. Prints it at row 1, column 10 and waits for 1 to 4:
+\
+\   1 KEYBOARD      the default keys (the original's 2, Interface II's)
+\   2 JOYSTICK      the analogue joystick (the original's 1, Kempston)
+\   3 DEFINE KEYS   six keys of the player's (the original's 3)
+\   4 PLAY GAME     as it is
+\
+\ Every choice returns to the credits (52290), whose fire starts a game.
+.z52481
+{
+    JSR fe_colours_menu
+    LDA #LO(fe_menu_text) : STA rl
+    LDA #HI(fe_menu_text) : STA rh
+    LDA #1 : STA rb : LDA #10 : STA rc
+    JSR fe_print
+.wait
+    LDX #KEY_1 : JSR key_down : BNE keyboard
+    LDX #KEY_2 : JSR key_down : BNE joystick
+    LDX #KEY_3 : JSR key_down : BNE define
+    LDX #KEY_4 : JSR key_down : BEQ wait
+    RTS
+.keyboard
+    LDX #5
+.default
+    LDA fe_default_keys,X : STA key_table,X
+    DEX : BPL default
+    LDA #0 : STA use_joystick
+    RTS
+.joystick
+    LDA #1 : STA use_joystick
+    RTS
+.define
+    \ 1-5 all released first (52538)
+    LDX #KEY_1 : JSR key_down : BNE define
+    LDX #KEY_2 : JSR key_down : BNE define
+    LDX #KEY_3 : JSR key_down : BNE define
+    LDX #KEY_4 : JSR key_down : BNE define
+    LDX #KEY_5 : JSR key_down : BNE define
+    LDA #LO(a57941) : STA rl : LDA #HI(a57941) : STA rh
+    LDA #12 : STA rb : LDA #10 : STA rc
+    JSR fe_print
+    LDA #0 : STA fe_which
+.each
+    \ its prompt (58784's table, in key_table's order) on a row of its own
+    LDA fe_which : ASL A : TAY
+    LDA a58784,Y : STA rl
+    LDA a58784+1,Y : STA rh
+    LDA fe_which : CLC : ADC #14 : STA rb
+    LDA #10 : STA rc
+    JSR fe_print
+    JSR z52610
+    LDY fe_which : STA key_table,Y
+    \ and the key's name beside it
+    JSR fe_key_name
+    LDA fe_which : CLC : ADC #14 : STA rb
+    LDA #FE_NAME_COL : STA rc
+    LDA #LO(fe_name) : STA rl : LDA #HI(fe_name) : STA rh
+    JSR fe_print
+    INC fe_which
+    LDA fe_which : CMP #6 : BNE each
+    LDA #0 : STA use_joystick
+    RTS
+}
+.fe_which   EQUB 0
+
+\ The menu in the original's look: its title and attributes, the BBC's
+\ choices.
+.fe_menu_text
+    EQUB 128 + 70 : EQUS " CAULDRON II", 13, 13, 13
+    EQUB 128 + 5
+    EQUS "1 KEYBOARD", 13, 13
+    EQUS "2 JOYSTICK", 13, 13
+    EQUS "3 DEFINE KEYS", 13, 13
+    EQUS "4 PLAY GAME$"
+
+\ The keyboard's default keys, in key_table's order (decision 8).
+.fe_default_keys
+    EQUB &48, &68, &61, &42, &49, &70   ; : / Z X RETURN ESCAPE
+
+\ ---------------------------------------------------------------------------
+\ 52610: wait for a key. Scans the keyboard until a key is down; it must
+\ read held 256 times in a row, then released 256 times in a row. Any
+\ key will do, one already chosen too. Out: A and X the key's internal
+\ number (the original's BC, its half-row's port, and A, its bits).
+.z52610
+{
+.scan
+    LDX #0
+.try
+    JSR key_down : BNE held
+    INX
+    CPX #2 : BNE row                ; (2-9 are the start-up links)
+    LDX #&10
+.row
+    TXA : AND #15 : CMP #10 : BCC more
+    TXA : ADC #5 : TAX              ; (C set: the next row's first, +6)
+.more
+    CPX #&80 : BCC try
+    BCS scan                        ; (always)
+.held
+    LDY #0
+.down
+    JSR key_down : BEQ held         ; (let go: count again)
+    DEY : BNE down
+.release
+    LDY #0
+.up
+    JSR key_down : BNE release      ; (still held: count again)
+    DEY : BNE up
+    TXA
+    RTS
+}
+
+\ The name of key A, padded to FE_NAME_LEN, into fe_name (after its
+\ attribute).
+FE_NAME_LEN = 10
+FE_NAME_COL = 32 - FE_NAME_LEN
+.fe_key_name
+{
+    STA fe_tmp
+    LDA #LO(fe_key_names) : STA fe_next_at+1
+    LDA #HI(fe_key_names) : STA fe_next_at+2
+.find
+    JSR fe_next : CMP #&FF : BEQ blank
+    CMP fe_tmp : BEQ found
+.skip
+    JSR fe_next : CMP #'$' : BNE skip
+    JMP find
+.blank
+    LDY #0 : BEQ pad                ; (always: not in the list)
+.found
+    LDY #0
+.copy
+    JSR fe_next : CMP #'$' : BEQ pad
+    STA fe_name+1,Y
+    INY : BNE copy                  ; (always)
+.pad
+    LDA #' '
+.space
+    CPY #FE_NAME_LEN : BEQ done
+    STA fe_name+1,Y
+    INY : BNE space                 ; (always)
+.done
+    RTS
+}
+.fe_tmp     EQUB 0
+\ The list's next byte.
+.fe_next
+.fe_next_at
+    LDA &FFFF
+    INC fe_next_at+1 : BNE fe_next_done
+    INC fe_next_at+2
+.fe_next_done
+    RTS
+.fe_name
+    EQUB 128 + 66
+    SKIP FE_NAME_LEN
+    EQUS "$"
+
+\ Each key's name, as the printer can print it (digits, capitals,
+\ space, and the original's - / ^): its internal number, the name, '$'.
+MACRO KEY n, name
+    EQUB n : EQUS name, "$"
+    ASSERT LEN(name) <= FE_NAME_LEN
+ENDMACRO
+.fe_key_names
+    KEY &00, "SHIFT"
+    KEY &01, "CTRL"
+    KEY &10, "Q"
+    KEY &11, "3"
+    KEY &12, "4"
+    KEY &13, "5"
+    KEY &14, "F4"
+    KEY &15, "8"
+    KEY &16, "F7"
+    KEY &17, "-"
+    KEY &18, "^"
+    KEY &19, "LEFT"
+    KEY &20, "F0"
+    KEY &21, "W"
+    KEY &22, "E"
+    KEY &23, "T"
+    KEY &24, "7"
+    KEY &25, "I"
+    KEY &26, "9"
+    KEY &27, "0"
+    KEY &28, "UNDERLINE"
+    KEY &29, "DOWN"
+    KEY &30, "1"
+    KEY &31, "2"
+    KEY &32, "D"
+    KEY &33, "R"
+    KEY &34, "6"
+    KEY &35, "U"
+    KEY &36, "O"
+    KEY &37, "P"
+    KEY &38, "LEFT BRKT"
+    KEY &39, "UP"
+    KEY &40, "CAPS LOCK"
+    KEY &41, "A"
+    KEY &42, "X"
+    KEY &43, "F"
+    KEY &44, "Y"
+    KEY &45, "J"
+    KEY &46, "K"
+    KEY &47, "AT"
+    KEY &48, "COLON"
+    KEY &49, "RETURN"
+    KEY &50, "SHIFT LOCK"
+    KEY &51, "S"
+    KEY &52, "C"
+    KEY &53, "G"
+    KEY &54, "H"
+    KEY &55, "N"
+    KEY &56, "L"
+    KEY &57, "SEMICOLON"
+    KEY &58, "RIGHT BRKT"
+    KEY &59, "DELETE"
+    KEY &60, "TAB"
+    KEY &61, "Z"
+    KEY &62, "SPACE"
+    KEY &63, "V"
+    KEY &64, "B"
+    KEY &65, "M"
+    KEY &66, "COMMA"
+    KEY &67, "STOP"
+    KEY &68, "/"
+    KEY &69, "COPY"
+    KEY &70, "ESCAPE"
+    KEY &71, "F1"
+    KEY &72, "F2"
+    KEY &73, "F3"
+    KEY &74, "F5"
+    KEY &75, "F6"
+    KEY &76, "F8"
+    KEY &77, "F9"
+    KEY &78, "BACKSLASH"
+    KEY &79, "RIGHT"
+    EQUB &FF
+
+\ ---------------------------------------------------------------------------
+\ 53101: game over, from 52975 when the lives go below 0. Tune 3 from its
+\ start, the interrupt playing it (24002 = 2); the verse at row 3,
+\ column 6 and the score at row 21, column 16; fire released, then
+\ pressed; the title again.
+.z53101
+{
+    SEI
+    JSR z51850
+    LDA #2 : STA a24002
+    CLI
+    JSR fe_cls
+    JSR fe_colours_end
+    LDA #LO(a58515) : STA rl : LDA #HI(a58515) : STA rh
+    LDA #3 : STA rb : LDA #6 : STA rc
+    JSR fe_print
+    LDA #21 : STA rb : LDA #16 : STA rc
+    JMP fe_score_wait
+}
+
+\ 56811: the win, through the table at 61131. Unless every object is
+\ there (56794: Z if so), the pumpkin dies (56571). Otherwise +100, tune
+\ 2 from its start, the interrupt playing it (24002 = 3); the text at
+\ row 6, column 6 and the score at row 12, column 16; fire released,
+\ then pressed; the title again.
+.z56811
+{
+    JSR z56794 : BEQ won
+    JMP z56571
+.won
+    LDA #LO(a58850) : STA re : LDA #HI(a58850) : STA rd
+    JSR z57616
+}
+.fe_win_screen
+{
+    SEI
+    JSR z51400
+    LDA #3 : STA a24002
+    CLI
+    JSR fe_cls
+    JSR fe_colours_end
+    LDA #LO(a58666) : STA rl : LDA #HI(a58666) : STA rh
+    LDA #6 : STA rb : LDA #6 : STA rc
+    JSR fe_print
+    LDA #12 : STA rb : LDA #16 : STA rc
+    \ (fall into fe_score_wait)
+}
+\ The score (58803) at row B, column C; then fire released, then pressed,
+\ through the input (52767, whose abort restarts too); then the title.
+.fe_score_wait
+{
+    LDA #LO(a58803) : STA rl : LDA #HI(a58803) : STA rh
+    JSR fe_print
+.up
+    JSR z52767 : AND #16 : BNE up
+.down
+    JSR z52767 : AND #16 : BEQ down
+    JMP z52235
+}
+
+\ ---------------------------------------------------------------------------
+\ The front end's test build (tools/fecheck.mjs): its own printer and
+\ clear, as the original's do them, and entries the check jumps to.
+IF DEFINED(FETEST)
+
+\ 54363 as the original: HL the string, B the row, C the column. Each
+\ glyph's lit pixels in ink_logical's colour for the attribute's ink;
+\ the attribute into attrs.
+.fe_test_print
+{
+    LDA rc : STA fe_col0
+.next
+    LDY #0 : LDA (rhl),Y
+    INC rl : BNE got
+    INC rh
+.got
+    CMP #'$' : BNE not_end
+    RTS
+.not_end
+    CMP #13 : BNE not_nl
+    INC rb : LDA fe_col0 : STA rc
+    JMP next
+.not_nl
+    CMP #128 : BCC char
+    AND #127 : STA a24024
+    JMP next
+.char
+    CMP #'0' : BCC other
+    CMP #'9' + 1 : BCS letter
+    SEC : SBC #'0' : JMP glyph
+.letter
+    CMP #'A' : BCC other
+    CMP #'Z' + 1 : BCS other
+    SEC : SBC #'A' - 10 : JMP glyph
+.other
+    LDX #26
+.look
+    CMP a57817,X : BEQ found
+    DEX : BPL look
+    JMP glyph                       ; (its own code)
+.found
+    LDA a57844,X
+.glyph
+    JSR fe_test_glyph
+    INC rc
+    JMP next
+}
+.fe_col0    EQUB 0
+
+\ Glyph A at row rb, column rc, in the colour of a24024's ink.
+.fe_test_glyph
+{
+    \ the glyph's bytes: r_font + 8A
+    STA fe_g : LDA #0 : STA fe_g+1
+    ASL fe_g : ROL fe_g+1 : ASL fe_g : ROL fe_g+1 : ASL fe_g : ROL fe_g+1
+    LDA fe_g : CLC : ADC #LO(r_font) : STA src+1
+    LDA fe_g+1 : ADC #HI(r_font) : STA src+2
+    \ the cell: screen + 512 rb + 16 rc
+    LDA rc : ASL A : ASL A : ASL A : ASL A : STA dst+1 : STA dst2+1
+    LDA rb : ASL A : ADC #HI(screen) : STA dst+2 : STA dst2+2
+    LDA rc : LSR A : LSR A : LSR A : LSR A
+    CLC : ADC dst+2 : STA dst+2 : STA dst2+2
+    LDA dst2+1 : CLC : ADC #8 : STA dst2+1
+    LDA a24024 : AND #7 : TAX
+    LDY ink_logical,X : LDA fe_cbyte,Y : STA fe_lc
+    LDX #7
+.line
+.src
+    LDA &FFFF,X : PHA
+    LSR A : LSR A : LSR A : LSR A : JSR fe_nibble
+.dst
+    STA &FFFF,X
+    PLA : AND #15 : JSR fe_nibble
+.dst2
+    STA &FFFF,X
+    DEX : BPL line
+    \ its attribute
+    LDA rb : LSR A : LSR A : LSR A : CLC : ADC #HI(attrs) : STA atr+2
+    LDA rb : ASL A : ASL A : ASL A : ASL A : ASL A : ORA rc : STA atr+1
+    LDA a24024
+.atr
+    STA &FFFF
+    RTS
+}
+.fe_g       EQUW 0
+.fe_lc      EQUB 0
+
+\ Four pixels (A's low nibble, bit 3 the left) in colour fe_lc's byte.
+.fe_nibble
+    STA fe_g
+    ASL A : ASL A : ASL A : ASL A : ORA fe_g
+    AND fe_lc
+    RTS
+.fe_cbyte
+FOR c = 0..3
+    EQUB cbyte(c)
+NEXT
+
+\ 53087's: the pixels and the attributes clear.
+.fe_test_cls
+{
+    JSR cls
+    LDA #0 : TAX
+.attr
+    STA attrs,X : STA attrs+256,X : STA attrs+512,X
+    INX : BNE attr
+    RTS
+}
+
+\ 57664's dispatch of the tunes, for vsync_hook.
+.fe_test_hook
+{
+    LDA a24002 : BEQ none
+    CMP #1 : BEQ t1
+    CMP #2 : BEQ t3
+    JMP z51413
+.t1
+    JMP z50113
+.t3
+    JMP z51863
+.none
+    RTS
+}
+
+\ The entries: the title's music and the menu, then the credits' first
+\ page as 52290 prints it; game over; the win's screen.
+.fe_test
+{
+    LDX #&FF : TXS
+    LDA #LO(fe_test_hook) : STA vsync_hook
+    LDA #HI(fe_test_hook) : STA vsync_hook+1
+    JSR z50100
+    LDA #1 : STA a24002
+    JSR fe_cls
+    JSR z52481
+    JSR fe_cls
+    LDA a58776 : STA rl : LDA a58776+1 : STA rh
+    LDA a58780+1 : STA rb : LDA a58780 : STA rc
+    JSR fe_print
+}
+.fe_test_idle
+    JMP fe_test_idle
+.fe_test_over
+    LDX #&FF : TXS
+    LDA #LO(fe_test_hook) : STA vsync_hook
+    LDA #HI(fe_test_hook) : STA vsync_hook+1
+    JMP z53101
+.fe_test_win
+    LDX #&FF : TXS
+    LDA #LO(fe_test_hook) : STA vsync_hook
+    LDA #HI(fe_test_hook) : STA vsync_hook+1
+    JMP fe_win_screen
+ENDIF

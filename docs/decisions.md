@@ -108,3 +108,38 @@ the main program holds `sfx_busy`; the interrupt's explosion pulse then
 skips its writes but keeps its time (the original's would end the main
 program's pulse early). `make music` times pulses of six effects against
 4v T-states.
+
+## 8. The menu and the keys in the BBC's idiom (2026-10-31, provisional)
+
+The original's menu (52481) offers its machine's controls: 1 Kempston,
+2 Interface II (fixed keys 6-0), 3 keyboard (define six), 4 play. The
+port keeps its look (title, attributes, layout) and its decision, a
+choice of controls before the credits, in the BBC's terms
+(`src/frontend.6502`):
+
+| Port | Original's | Does |
+|---|---|---|
+| 1 KEYBOARD | 2 INTERFACE II | the fixed default keys: `:` up, `/` down, Z left, X right, RETURN fire, ESCAPE abort |
+| 2 JOYSTICK | 1 KEMPSTON | the analogue joystick (`use_joystick`); abort stays a key |
+| 3 DEFINE KEYS | 3 KEYBOARD | six keys of the player's |
+| 4 PLAY GAME | 4 PLAY GAME | as it is |
+
+Defining keys keeps the original's wait (52610: a key held 256 reads in a
+row, then released 256 in a row, any key, one already chosen too) and
+its prompts (58784), but each prompt on a row of its own with the BBC's
+name for the key chosen beside it, where the original overwrote one
+row: so the player sees what each key is, which the original's
+half-row bits never needed. Keys are internal key numbers in
+`key_table` (up, down, left, right, fire, abort), read from the System
+VIA. The names are the printer's characters: digits, capitals, space,
+`-` `/` `^`, and words for the rest (COLON, RETURN, SHIFT LOCK).
+
+## 9. The front end's colours (2026-10-31, provisional)
+
+The original's front-end screens are text on black paper with at most
+three inks each: the menu, keys and credits yellow, cyan and bright red;
+game over and the win magenta and red. Each gets a palette with those
+three (no splits needed), and the printer lights each glyph in the
+logical colour its attribute's ink shows as (`ink_logical`, the nearest
+the palette has to the inks the screen doesn't use). The attributes
+themselves stay the original's.
