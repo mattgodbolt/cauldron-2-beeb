@@ -328,6 +328,9 @@ SECTION Work, org = code_end, guard = screen, virtual = TRUE
 .spread_hi      SKIP 256        ; draw.6502's
 .spread_lo      SKIP 256
 .unlit          SKIP 256
+.sh_hi2         SKIP 256        ; the pre-shift's: a byte >> 2, 4 and 6 (draw.6502)
+.sh_hi4         SKIP 256
+.sh_hi6         SKIP 256
 .pat_even       SKIP 8 * SCREEN_ROWS    ; the rows' ink patterns (room.6502's make_patterns)
 .pat_odd        SKIP 8 * SCREEN_ROWS    ; ... the odd lines'
 \ Variables, in what the patterns leave of their two pages.

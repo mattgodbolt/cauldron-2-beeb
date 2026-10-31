@@ -40,6 +40,9 @@
     TXA : AND #&0F : STA spread_lo,X
     ASL A : ASL A : ASL A : ASL A : ORA spread_lo,X : STA spread_lo,X
     LDA lit_lo,X : ASL A : ASL A : ASL A : ASL A : ORA lit_lo,X : EOR #&FF : STA unlit,X
+    TXA : LSR A : LSR A : STA sh_hi2,X
+    LSR A : LSR A : STA sh_hi4,X
+    LSR A : LSR A : STA sh_hi6,X
     INX : BNE each
     STX xor_erase                   ; (0)
     STX ps_pend
@@ -72,8 +75,15 @@ ZA_AUTO1 scen_y
 
 \ The sprite routines read GAMEDATA's tables (60422, 59798, the frames,
 \ the line table 58931), so they only run with it paged in; most of them
-\ live there, as main RAM is full (decision 17).
-SECTION GameData
+\ live there, as main RAM is full (decision 17). The XOR itself reads
+\ only main RAM (the pre-shift's buffers, the screen and the tables), so
+\ it lives in ROOMDATA, paged in for it by xor_paged (decision 22).
+.xor_paged
+    JSR page_rooms
+    JSR xor_lines
+    JMP page_game
+
+SECTION RoomData
 
 ZA_AUTO2 xr_img                 ; xor_lines' image: its first line's bytes
 ZA_AUTO1 xr_n                   ; ... how many a line (1-255)
@@ -377,7 +387,6 @@ SECTION GameData                    ; (as xor_lines)
 .z57058_on
     PLA
     JMP z57182
-ENDSECTION
 
 \ The clipped draw: at the sides by a skip count (24038) and a limit
 \ (24039), above and below by the line table 58931, whose lines off the
@@ -470,7 +479,7 @@ ENDSECTION
     LDA #1 : STA k
 .batch
     LDA k : STA xr_lines
-    JSR xor_lines
+    JSR xor_paged
 .line_done
     LDA img : CLC : ADC rc : STA img
     BCC imged : INC img+1
@@ -486,8 +495,6 @@ ENDSECTION
     LDA frame
     RTS
 }
-
-SECTION GameData
 
 \ 57182: E - 12, then 57194.
 .z57182
@@ -526,7 +533,7 @@ SECTION GameData
     TYA : ADC #0 : STA scr+1 : STA top+1
     LDA rb : STA xr_lines
     LDA rc : STA xr_n : STA xr_step
-    LDX scr : LDY scr+1 : JSR xor_lines
+    LDX scr : LDY scr+1 : JSR xor_paged
     \ The colour: 88 + the third, and the top line's low byte.
     LDY frame : LDA a60422,Y : BEQ done
     STA n
@@ -645,7 +652,6 @@ ENDSECTION
     ZA_AUTO1 th
     ZA_AUTO1 k
     ZA_AUTO1 pages
-    ZA_AUTO1 t
     ZA_AUTO1 yy
     ZA_AUTO1 frame
     ZA_AUTO1 le
@@ -708,40 +714,67 @@ ENDSECTION
     ASL A
     INX : CPX #9 : BNE first
     LDY #0 : STA (q),Y              ; (q = HL - 2)
-    STY t                           ; (the byte before HL: 0)
-    JSR start_lines : BEQ tail
-    \ Y: the byte in the frame, and q + Y its place in the buffer (q one
-    \ on at each line's zero); le: Y at the line's end; A = t = 0.
+    LDX #0                          ; (the byte before HL: 0)
+    JSR start_lines : BNE fused
+    JMP tail
+    ZA_UNREACHABLE
+.fused
+    \ Each byte of the frame shifted: its own bits >> k (sh_hi2/4/6) and
+    \ the byte before's low k bits on top, from X, the byte before (0 at
+    \ a line's start, as the line's zero before it). Y: the byte in the
+    \ buffer from q, and the frame's from the source operand, one back
+    \ at each line's end (line_next); le: Y at the line's end.
     LDA w : STA le
-    TYA
-    LDX k : CPX #4 : BEQ f4_test : BCC f2_test : BCS f6_test
-    \ Six bits: the byte >> 6, and the one before's low six bits on top.
+    LDA k : CMP #4 : BEQ f4 : BCC f2
+    LDA gfx : STA f6_src+1 : LDA gfx+1 : STA f6_src+2
+    LDA q : STA f6_dst+1 : STA f6_end+1
+    LDA q+1 : STA f6_dst+2 : STA f6_end+2
 .f6_byte
-    LDA (gfx),Y : TAX
-    ASL A : ROL A : ROL A : AND #3 : ORA t : STA (q),Y
-    TXA : ASL A : ASL A : STA t
-    INY
-.f6_test
-    CPY le : BNE f6_byte
-    JSR line_end : BNE f6_test
+    TXA : ASL A : ASL A
+    CPY le : BEQ f6_end
+.f6_src
+    LDX &FFFF,Y
+    ORA sh_hi6,X
+.f6_dst
+    STA &FFFF,Y
+    INY : BNE f6_byte               ; (always: Y is below h * (w + 1))
+.f6_end
+    STA &FFFF,Y                     ; (the line's zero)
+    LDX #0 : JSR line_next : BNE f6_byte
     BEQ tail                        ; (always)
+.f4
+    LDA gfx : STA f4_src+1 : LDA gfx+1 : STA f4_src+2
+    LDA q : STA f4_dst+1 : STA f4_end+1
+    LDA q+1 : STA f4_dst+2 : STA f4_end+2
 .f4_byte
-    LDA (gfx),Y : TAX
-    LSR A : LSR A : LSR A : LSR A : ORA t : STA (q),Y
-    TXA : ASL A : ASL A : ASL A : ASL A : STA t
-    INY
-.f4_test
-    CPY le : BNE f4_byte
-    JSR line_end : BNE f4_test
+    TXA : ASL A : ASL A : ASL A : ASL A
+    CPY le : BEQ f4_end
+.f4_src
+    LDX &FFFF,Y
+    ORA sh_hi4,X
+.f4_dst
+    STA &FFFF,Y
+    INY : BNE f4_byte               ; (always)
+.f4_end
+    STA &FFFF,Y
+    LDX #f4_src - f6_src : JSR line_next : BNE f4_byte
     BEQ tail                        ; (always)
+.f2
+    LDA gfx : STA f2_src+1 : LDA gfx+1 : STA f2_src+2
+    LDA q : STA f2_dst+1 : STA f2_end+1
+    LDA q+1 : STA f2_dst+2 : STA f2_end+2
 .f2_byte
-    LDA (gfx),Y : TAX
-    LSR A : LSR A : ORA t : STA (q),Y
-    TXA : ROR A : ROR A : ROR A : AND #&C0 : STA t
-    INY
-.f2_test
-    CPY le : BNE f2_byte
-    JSR line_end : BNE f2_test
+    TXA : ROR A : ROR A : ROR A : AND #&C0     ; (X's low two bits, on top)
+    CPY le : BEQ f2_end
+.f2_src
+    LDX &FFFF,Y
+    ORA sh_hi2,X
+.f2_dst
+    STA &FFFF,Y
+    INY : BNE f2_byte               ; (always)
+.f2_end
+    STA &FFFF,Y
+    LDX #f2_src - f6_src : JSR line_next : BNE f2_byte
 .tail
     \ The tail in place, after the last line's zero.
     LDA th : BMI done
@@ -775,35 +808,51 @@ ENDSECTION
     ZA_UNREACHABLE
 
 \ The bytes from p, Y and pages as walk leaves them, shifted right by k
-\ in place, A the byte before the first.
+\ in place, A the byte before the first: as the fused copy, each byte's
+\ own bits >> k and the byte before's low k bits (X) on top.
 .in_place
-    LDX k : CPX #4 : BEQ k4 : BCS k6
-    \ Two bits: two carry chains, the first's carry in C, the second's in
-    \ t's bit 0 (ROR t keeps the first's while the second's turns, ROL t
-    \ swaps them back). They start as that byte's bits 0 and 1.
-    LSR A : STA t
+    TAX
+    LDA k : CMP #4 : BEQ k4 : BCS k6
+    LDA p : STA k2_src+1 : STA k2_dst+1
+    LDA p+1 : STA k2_src+2 : STA k2_dst+2
 .k2
-    LDA (p),Y : ROR A : ROR t : ROR A : ROL t : STA (p),Y
+    TXA : ROR A : ROR A : ROR A : AND #&C0
+.k2_src
+    LDX &FFFF,Y
+    ORA sh_hi2,X
+.k2_dst
+    STA &FFFF,Y
     INY : BNE k2
-    INC p+1 : DEC pages : BPL k2
+    INC k2_src+2 : INC k2_dst+2
+    DEC pages : BPL k2
     RTS
 .k4
-    ASL A : ASL A : ASL A : ASL A : STA t   ; (that byte << 4)
+    LDA p : STA k4_src+1 : STA k4_dst+1
+    LDA p+1 : STA k4_src+2 : STA k4_dst+2
 .k4_byte
-    LDA (p),Y : TAX
-    LSR A : LSR A : LSR A : LSR A : ORA t : STA (p),Y
-    TXA : ASL A : ASL A : ASL A : ASL A : STA t
+    TXA : ASL A : ASL A : ASL A : ASL A
+.k4_src
+    LDX &FFFF,Y
+    ORA sh_hi4,X
+.k4_dst
+    STA &FFFF,Y
     INY : BNE k4_byte
-    INC p+1 : DEC pages : BPL k4_byte
+    INC k4_src+2 : INC k4_dst+2
+    DEC pages : BPL k4_byte
     RTS
 .k6
-    ASL A : ASL A : STA t           ; (that byte << 2)
+    LDA p : STA k6_src+1 : STA k6_dst+1
+    LDA p+1 : STA k6_src+2 : STA k6_dst+2
 .k6_byte
-    LDA (p),Y : TAX
-    ASL A : ROL A : ROL A : AND #3 : ORA t : STA (p),Y
-    TXA : ASL A : ASL A : STA t
+    TXA : ASL A : ASL A
+.k6_src
+    LDX &FFFF,Y
+    ORA sh_hi6,X
+.k6_dst
+    STA &FFFF,Y
     INY : BNE k6_byte
-    INC p+1 : DEC pages : BPL k6_byte
+    INC k6_src+2 : INC k6_dst+2
+    DEC pages : BPL k6_byte
     RTS
 
 \ Each line's w bytes, then a zero, from HL.
@@ -877,16 +926,20 @@ ENDSECTION
     LDA rb : STA lines
     RTS
 
-\ The fused copy's line end: its zero shifted, A = t, at q + Y; q on
-\ one; le the next line's end; A = t = 0. Z set: the last line.
-.line_end
-    STA (q),Y
-    INC q : BNE le1 : INC q+1
-.le1
+\ The fused copy's line end, its zero written: Y on past it, and the
+\ loop's source operand (f6_src + X) one back, so that it + Y is still
+\ the frame's next byte; le the next line's end; X = 0, the byte before
+\ the next line's first. Z set: the last line.
+.line_next
+    INY
+    LDA f6_src+1,X : BNE ln : DEC f6_src+2,X
+.ln
+    DEC f6_src+1,X
     TYA : CLC : ADC w : STA le
-    LDA #0 : STA t
+    LDX #0
     DEC lines
     RTS
+    ASSERT f4_src > f6_src AND f2_src > f4_src AND f2_src - f6_src < 256
 
 \ The bytes from p, th:A + 1 of them (th 0 or 1), walked as (p),Y with Y
 \ running up to the end of a page: p back by Y = 255 - A, pages = th.
